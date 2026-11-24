@@ -76,7 +76,18 @@ button,input,select{font:inherit;color:inherit}
 .bigbtn{margin-top:14px;background:var(--green);color:#fff;border:none;padding:9px 22px;font-size:14px;border-radius:3px;cursor:pointer}
 .bigbtn:hover{background:var(--green-d)}
 #busy{position:absolute;inset:0;background:rgba(255,255,255,.62);z-index:5;display:flex;align-items:center;justify-content:center}
-#busy .card{background:#fff;border:1px solid var(--line);box-shadow:0 4px 18px rgba(0,0,0,.18);padding:16px 22px;display:flex;align-items:center;gap:14px;border-radius:4px}
+#busy .card{background:#fff;border:2px solid var(--green);box-shadow:0 8px 30px rgba(0,0,0,.3);padding:22px 28px;display:flex;align-items:center;gap:18px;border-radius:6px;min-width:420px;max-width:80%}
+#busy .card .spin{width:38px;height:38px;border-width:5px;flex:none}
+#busy .bt{flex:1;min-width:0}
+#busy #busyt{font-size:16px;font-weight:600;color:#1d3b2c}
+#busy .bh{color:#667;font-size:12px;margin-top:4px}
+.pbar{height:8px;background:#dcebe2;border-radius:4px;overflow:hidden;margin:10px 0 4px;position:relative}
+.pbar i{position:absolute;top:0;bottom:0;width:35%;background:var(--green);border-radius:4px;animation:pb 1.2s ease-in-out infinite}
+@keyframes pb{0%{left:-35%}100%{left:100%}}
+#status.working{background:repeating-linear-gradient(45deg,var(--green) 0 14px,var(--green-d) 14px 28px);background-size:40px 100%;animation:ps 1s linear infinite;font-weight:600}
+@keyframes ps{to{background-position:40px 0}}
+#sstop{display:none;background:#fff;color:#a02020;border:none;border-radius:3px;font-size:12px;font-weight:600;padding:1px 12px;cursor:pointer}
+#status.working #sstop{display:inline-block}
 .spin{width:22px;height:22px;border:3px solid #cfe3d7;border-top-color:var(--green);border-radius:50%;animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 #err{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:6;background:#fde7e9;border:1px solid #e8a2a8;color:#7a1c24;padding:8px 12px;max-width:80%;border-radius:3px;display:flex;gap:12px;align-items:flex-start;user-select:text}
@@ -461,7 +472,7 @@ input[type=checkbox],input[type=radio]{width:15px;height:15px;margin:0 6px 0 0;v
           <div class="erec" id="erec" hidden></div>
           <p id="eng" style="margin-top:18px;font-size:12px">Starting query engine&hellip;</p>
         </div></div>
-        <div id="busy" hidden><div class="card"><div class="spin"></div><div><div id="busyt">Calculating&hellip;</div><div id="busys" style="color:#777"></div></div><button class="btn" id="bCancel">Cancel</button></div></div>
+        <div id="busy" hidden><div class="card"><div class="spin"></div><div class="bt"><div id="busyt">Calculating&hellip;</div><div class="pbar"><i></i></div><div><span id="busyel" style="color:#444"></span> <span id="busys" style="color:#777"></span></div><div class="bh">Large data can take several minutes. You can stop at any time &ndash; your data is not changed.</div></div><button class="btn pri" id="bCancel">Stop</button></div></div>
         <div id="err" hidden><pre id="errt"></pre><button class="btn" id="errx">Close</button></div>
         <div class="dropmask" id="dropmask">Drop data file(s) to open</div>
         <div id="dz" hidden><div class="dzz" id="dzf" data-area="filters"><b>Filters</b></div><div class="dzz" id="dzr" data-area="rows"><b>Rows</b></div><div class="dzz" id="dzc" data-area="cols"><b>Columns</b></div><div class="dzz" id="dzv" data-area="values"><b>&Sigma; Values</b></div></div>
@@ -487,7 +498,7 @@ input[type=checkbox],input[type=radio]{width:15px;height:15px;margin:0 6px 0 0;v
     </div>
   </div>
   <div id="sheets"></div>
-  <div id="status"><span id="smsg">Ready</span><span id="sfile"></span><span id="sinfo"></span><span id="sdim"></span></div>
+  <div id="status"><span id="smsg">Ready</span><button id="sstop" title="Stop the running calculation">&#9632; Stop</button><span id="sfile"></span><span id="sinfo"></span><span id="sdim"></span></div>
 </div>
 <input type="file" id="fileIn" accept=".parquet,.pq,.csv,.tsv,.txt,.json,.jsonl,.ndjson,.xlsx" multiple hidden>
 
@@ -1081,11 +1092,21 @@ async function doBuild(tok){
 }
 
 var building=false,busyTimer=null;
-function showBusy(on,text){
-  var b=$('#busy');
-  if(on){b.hidden=false;$('#busyt').textContent=text||'Calculating pivot…';var t0=performance.now();clearInterval(busyTimer);
-    busyTimer=setInterval(function(){$('#busys').textContent=fmtMs(performance.now()-t0)+' elapsed'},200);$('#busys').textContent=''}
-  else{b.hidden=true;clearInterval(busyTimer)}
+var busyKind='',busyStopped=false,busyTitle=document.title;
+function showBusy(on,text,kind){
+  var b=$('#busy'),st=$('#status');
+  if(on){
+    var label=text||'Calculating pivot…';busyKind=kind||'';busyStopped=false;
+    b.hidden=false;$('#busyt').textContent=label;$('#busys').textContent='';st.classList.add('working');
+    var t0=performance.now();clearInterval(busyTimer);
+    var tick=function(){var el_=fmtMs(performance.now()-t0)+' elapsed';$('#busyel').textContent=el_;setStatus('Working: '+label.replace(/…$/,'')+' – '+el_);document.title='⏳ '+busyTitle};
+    tick();busyTimer=setInterval(tick,250);
+  }else{b.hidden=true;clearInterval(busyTimer);st.classList.remove('working');document.title=busyTitle}
+}
+/* Stop button (overlay and status bar): interrupts the running query / export */
+function stopBusy(){
+  var k=busyKind;busyStopped=true;exportCancel=true;cancelBuild();
+  setStatus(k==='open'?'Opening cancelled':'Cancelled – adjust the layout or press Refresh.');
 }
 function showError(e){var m=(e&&e.message)||String(e);if(m===STALE)return;
   if(/Out of Memory/i.test(m)&&DB.native)m='The native engine ran out of memory (limit '+DB.native.info.memory+').\nFilter the data, avoid very high-cardinality fields in Rows/Columns and Distinct Count, or restart the engine with a larger limit, e.g.  start-native.cmd --memory 48GB\n\n'+m.split('\n')[0];
@@ -3134,15 +3155,18 @@ async function openSqlManager(opts){
     if(!fs)throw new Error('The files of this view are not accessible. Register them again in the Data Manager.');
     var nm=await registerQuery(fs);return {names:nm,reg:nm};
   };
+  var stopBtn=el('button',{class:'btn',text:'■ Stop',title:'Stop the running query',style:'display:none',onclick:function(){stopped=true;cancelEngine()}});
+  var stopped=false;
   var run=async function(){
     if(running)return;
-    readForm();var reg=[];
+    readForm();var reg=[],tm=null;
     try{
       validate();
       var uq=used(),nf=await namesFor(uq);reg=nf.reg;
       var sql=composeQuery(uq,nf.names);
-      running=true;showMsg('Running… (first 100 rows)');resBox.innerHTML='';
-      var t0=performance.now();
+      running=true;stopped=false;resBox.innerHTML='';
+      var t0=performance.now();stopBtn.style.display='';
+      var tk=function(){showMsg('⏳ Running… '+fmtMs(performance.now()-t0)+' elapsed – press Stop to cancel')};tk();tm=setInterval(tk,250);
       var desc=await query('DESCRIBE SELECT * FROM ('+sql+'\n)');
       var rows=await query('SELECT * FROM ('+sql+'\n) LIMIT 100');
       var tb=el('table'),hr=el('tr');
@@ -3151,8 +3175,8 @@ async function openSqlManager(opts){
       var bd=el('tbody');rows.forEach(function(r){var tr=el('tr');r.forEach(function(v){tr.appendChild(el('td',{text:cellText(v)}))});bd.appendChild(tr)});tb.appendChild(bd);
       resBox.appendChild(el('div',{class:'tw'},[tb]));
       showMsg(desc.length+' column(s), '+(rows.length>=100?'first 100 rows shown':rows.length+' row(s)')+' – '+fmtMs(performance.now()-t0)+'. The pivot always uses the full result.');
-    }catch(e){showMsg(e.message||String(e),true);resBox.innerHTML=''}
-    finally{running=false;reg.forEach(function(n){try{DB.db.dropFile(n)}catch(e){}})}
+    }catch(e){if(stopped||/INTERRUPT/i.test(e.message||''))showMsg('Stopped.');else showMsg(e.message||String(e),true);resBox.innerHTML=''}
+    finally{running=false;clearInterval(tm);stopBtn.style.display='none';reg.forEach(function(n){try{DB.db.dropFile(n)}catch(e){}})}
   };
   var save=function(){
     readForm();validate();
@@ -3200,7 +3224,7 @@ async function openSqlManager(opts){
     el('div',{class:'fd-hint',text:'Drag a column into the query (Ctrl = with alias) or double-click it.'}),
     tblBox]);
   var main=el('div',{class:'sqm-r'},[
-    el('div',{class:'sqm-bar'},[nameIn,el('button',{class:'btn',text:'▶ Run preview',title:'Ctrl+Enter',onclick:run}),el('button',{class:'btn',text:'Save',onclick:function(){act(false)}}),
+    el('div',{class:'sqm-bar'},[nameIn,el('button',{class:'btn',text:'▶ Run preview',title:'Ctrl+Enter',onclick:run}),stopBtn,el('button',{class:'btn',text:'Save',onclick:function(){act(false)}}),
       el('button',{class:'btn pri',text:'Save & open in PivotTable',onclick:function(){act(true)}}),delBtn]),
     el('div',{class:'fd-hint',html:'<b>Advanced.</b> DuckDB SQL over your data files; the result becomes a <b>view</b> you open as a PivotTable source. Nothing is copied – the files are read in place.'}),
     sqlWrap,msg,resBox]);
@@ -3429,8 +3453,9 @@ async function openFiles(files,o){
     if(tab!==curTab)await switchTab(tab);
     cancelBuild();building=false;showBusy(false);
     $('#err').hidden=true;
-    var t0=performance.now();
-    if(S.srcView)releaseTab(curTab); // replace a previous source in this tab
+    var t0=performance.now(),released=false;
+    showBusy(true,files[0].query?'Running the SQL view and counting rows…':'Opening data source…','open');
+    if(S.srcView){released=!!S.srcView;releaseTab(curTab)} // replace a previous source in this tab
     if(PV){dropPV(PV);PV=null}
     var id=++srcSeq,view='srcv_'+id,names=[],qsrc=files[0].query||null,sel;
     if(qsrc){ // a saved SQL view over one or more Parquet files
@@ -3465,10 +3490,13 @@ async function openFiles(files,o){
     var restored=st2?applyState(st2):false;
     if(o.remapFrom)await checkCalcs(miss);
     renderTabs();syncChrome();Grid.invalidate();Grid.resetWidths();
+    showBusy(false);
     if(inAnyLayout()){setStatus('Opened in '+fmtMs(performance.now()-t0)+(restored?' – saved layout restored':''));await rebuild()}
     else{setStatus('Opened '+files.length+' file(s) in '+fmtMs(performance.now()-t0)+' – choose fields from the list to build the pivot.');showEmpty('fields')}
     if(o.remapFrom)showMissing(miss,srcLabel(files));
-  }catch(e){if(/read_xlsx|excel/i.test(e.message||''))e.message='Reading Excel files needs the DuckDB "excel" extension. The native engine downloads it the first time it is used (internet needed once); the browser engine does not include it. Save the sheet as CSV as an alternative.\n\n'+e.message;showError(e);setStatus('Failed to open file')}
+  }catch(e){showBusy(false);
+    if(busyStopped||/INTERRUPT/i.test(e.message||'')){setStatus('Opening cancelled');if(released){S=freshState();curTab.S=S;PV=null;renderTabs();syncChrome();showEmpty('open')}return}
+    if(/read_xlsx|excel/i.test(e.message||''))e.message='Reading Excel files needs the DuckDB "excel" extension. The native engine downloads it the first time it is used (internet needed once); the browser engine does not include it. Save the sheet as CSV as an alternative.\n\n'+e.message;showError(e);setStatus('Failed to open file')}
 }
 async function tryAutoResolve(tab){
   try{
@@ -5048,7 +5076,7 @@ function wire(){
   $('#bOpen').onclick=function(){openDataSources()};
   fi.onchange=function(){var f=Array.prototype.slice.call(fi.files);if(inputResolver){var r=inputResolver;inputResolver=null;r(f.length?{files:f,handles:null}:null)}else if(f.length)openFiles(f)};
   $('#bRefresh').onclick=function(){distinctCache={};rebuild()};
-  $('#bCancel').onclick=function(){exportCancel=true;cancelBuild();setStatus('Calculation cancelled – adjust the layout or press Refresh.')};
+  $('#bCancel').onclick=stopBusy;$('#sstop').onclick=stopBusy;
   $('#errx').onclick=function(){$('#err').hidden=true};
   var setPane=function(on){if(!on&&!inAnyLayout())return;paneOn=on;var has=S.files.length>0;$('#fieldpane').classList.toggle('hide',!(on&&has));$('#fpOpen').hidden=!(has&&!on);setTimeout(function(){Grid.layout();Grid.draw()},0)};
   $('#fsrc').onclick=function(){
