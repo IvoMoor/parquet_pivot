@@ -452,6 +452,7 @@ input[type=checkbox],input[type=radio]{width:15px;height:15px;margin:0 6px 0 0;v
           <p id="e2"></p>
           <div id="startopts" hidden>
             <button class="startopt" id="soNew"><span class="sic">+</span><span><b>Create new report</b><small>Start from a Parquet, CSV, JSON or Excel file</small></span></button>
+            <button class="startopt" id="soSql"><span class="sic">ƒ</span><span><b>Create report from SQL</b><small id="soSqlSub">Write the whole query yourself and read files by full path &ndash; no data source needed</small></span></button>
             <button class="startopt" id="soOpen"><span class="sic">&#9636;</span><span><b>Open report</b><small>Browse your saved reports and their folders</small></span></button>
             <button class="startopt" id="soImport"><span class="sic">&#8681;</span><span><b>Import a report file</b><small>Read a report (.ppview) from your computer</small></span></button>
             <div class="fd-hint" style="margin-top:6px">Everything stays on this computer &ndash; your data is never uploaded.</div>
@@ -571,6 +572,7 @@ function initEngine(){
     return true;
   })();
   DB.ready.catch(function(e){setEng('Engine failed: '+e.message);showError(e)});
+  DB.ready.then(function(){if(!DB.native){var b=$('#soSql');b.style.opacity='.6';$('#soSqlSub').textContent='Needs the native engine (start-native.cmd) to read files by full path'}},function(){});
   return DB.ready;
 }
 
@@ -3011,7 +3013,8 @@ function sqlHtml(src,aliases){
   }
   return out+esc(src.slice(last));
 }
-async function openSqlManager(){
+async function openSqlManager(opts){
+  opts=opts||{};var direct=!!opts.direct; // direct: report from a hand-written query, files are read by full path (no registration)
   try{await DB.ready}catch(e){}
   await Lib.load();
   var cur=null,running=false,colQ='';
@@ -3025,7 +3028,7 @@ async function openSqlManager(){
   var resBox=el('div',{class:'sqm-res'}),msg=el('div',{class:'fd-hint',style:'min-height:16px'}),listBox=el('div',{class:'sqm-l'});
   var showMsg=function(t,bad){msg.textContent=t||'';msg.className='fd-hint'+(bad?' err':'')};
   var back=null;
-  var blank=function(){return {id:null,name:'',sql:'',tables:[]}};
+  var blank=function(){return {id:null,name:'',sql:direct?"SELECT *\nFROM read_parquet('C:/path/to/folder/*.parquet')":'',tables:[]}};
   var readForm=function(){cur.name=nameIn.value.trim();cur.sql=sqlTa.value};
   var validate=function(){
     var seen=[];
@@ -3105,7 +3108,7 @@ async function openSqlManager(){
   var isUsed=function(t){return !!t.alias&&new RegExp('(^|[^A-Za-z0-9_])'+t.alias.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'([^A-Za-z0-9_]|$)','i').test(cur.sql||'')};
   var used=function(){return {id:cur.id,name:cur.name,sql:cur.sql,tables:cur.tables.filter(isUsed)}};
   var load=function(v){
-    cur={id:v.id,name:v.name,sql:v.sql,tables:withRegistered(v.tables.map(function(t){return {alias:t.alias,name:t.name,size:t.size,path:t.path,file:t.file}}))};
+    cur={id:v.id,name:v.name,sql:v.sql,tables:(direct?function(t){return t}:withRegistered)(v.tables.map(function(t){return {alias:t.alias,name:t.name,size:t.size,path:t.path,file:t.file}}))};
     if(!cur.sql&&cur.tables.length===1)cur.sql='SELECT *\nFROM '+cur.tables[0].alias;
     nameIn.value=cur.name;sqlTa.value=cur.sql;resBox.innerHTML='';showMsg('');renderTables();renderList();hl();
   };
@@ -3163,7 +3166,7 @@ async function openSqlManager(){
   };
   var act=async function(openAfter){
     try{
-      save();
+      if(direct){readForm();validate();if(!cur.name)cur.name='SQL report'}else save();
       if(!openAfter){showMsg('Saved “'+cur.name+'”.');return}
       var qf=null;
       if(!DB.native){qf=await queryFiles(used(),true);if(!qf)throw new Error('The files of this view are not accessible.')}
@@ -3171,7 +3174,10 @@ async function openSqlManager(){
       if(!cur.sql.trim())throw new Error('Write a SQL query first.');
       var q=cleanQuery(used());
       if(back&&back.parentNode)back.remove();
-      openFiles([{name:cur.name,size:0,native:DB.native?true:undefined,query:q}],{qfiles:qf});
+      if(direct)REPORT={name:'Untitled report',source:null,id:null,handle:null,fileName:'',dirty:false};
+      var r=openFiles([{name:cur.name,size:0,native:DB.native?true:undefined,query:q}],{qfiles:qf,noRecent:direct});
+      if(direct)syncReportBar();
+      return r;
     }catch(e){showMsg(e.message||String(e),true)}
   };
   var del=function(btn){
@@ -3198,7 +3204,14 @@ async function openSqlManager(){
       el('button',{class:'btn pri',text:'Save & open in PivotTable',onclick:function(){act(true)}}),delBtn]),
     el('div',{class:'fd-hint',html:'<b>Advanced.</b> DuckDB SQL over your data files; the result becomes a <b>view</b> you open as a PivotTable source. Nothing is copied – the files are read in place.'}),
     sqlWrap,msg,resBox]);
-  var dlg=openDialog('Advanced – SQL views',el('div',{class:'sqm'},[side,main]),[{text:'Close',fn:function(){setTimeout(openDataSources,0)}}],'sqdlg');
+  if(direct){
+    side.style.display='none';
+    main.firstChild.querySelectorAll('.btn:not(.pri)').forEach(function(b){if(b.textContent!=='▶ Run preview')b.style.display='none'});
+    main.firstChild.querySelector('.btn.pri').textContent='Open as report';
+    nameIn.placeholder='Report name (optional)';
+    main.children[1].innerHTML='<b>Report from SQL.</b> Write one SELECT query and read files by full path, e.g. <code>read_parquet(&#39;D:/data/sales/*.parquet&#39;)</code>, <code>read_csv(&#39;C:/x/data.csv&#39;)</code>, <code>read_json_auto(...)</code> or <code>read_xlsx(...)</code>. Folders can be read with a wildcard. Nothing is copied &ndash; the files are read in place.';
+  }
+  var dlg=openDialog(direct?'New report from SQL':'Advanced – SQL views',el('div',{class:'sqm'},[side,main]),[{text:'Close',fn:function(){if(!direct)setTimeout(openDataSources,0)}}],'sqdlg');
   back=dlg.parentNode;
   load(blank());
   return {load:load};
@@ -5070,6 +5083,9 @@ function wire(){
   $('#bWbOpen').onclick=function(){var p=btnPos('bWbOpen');showMenu([{text:'Open report\u2026',fn:openLoadViews},{text:'Import report from file\u2026',fn:pickViewFile}],p.x,p.y)};
   $('#soNew').onclick=async function(){try{await DB.ready}catch(e){}var r=await pickOne('Select a data file for the new report');
     if(r&&r.files.length){REPORT={name:'Untitled report',source:null,id:null,handle:null,fileName:'',dirty:false};syncReportBar();openFiles(r.files,{handles:r.handles})}};
+  $('#soSql').onclick=async function(){try{await DB.ready}catch(e){}
+    if(!DB.native){alert('Creating a report from SQL needs the native engine, because only it can read files by full path.\nStart the application with start-native.cmd.');return}
+    openSqlManager({direct:true})};
   $('#soOpen').onclick=function(){openLoadViews()};
   $('#soImport').onclick=function(){pickViewFile()};
   $('#bWbSave').onclick=function(){var p=btnPos('bWbSave');showMenu([{text:'Save (Ctrl+S)',fn:saveReport},{text:'Save as…',fn:openSaveViews}],p.x,p.y)};
