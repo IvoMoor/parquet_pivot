@@ -1,0 +1,66 @@
+# --- Secrets & credentials (never commit) ---
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+id_rsa*
+id_ed25519*
+secrets.*
+credentials*
+*.secret
+.aws/
+.azure/
+.ssh/
+
+# --- Data files (never commit) ---
+*.parquet
+*.csv
+*.tsv
+*.json.gz
+*.jsonl
+*.ndjson
+*.arrow
+*.feather
+*.orc
+*.avro
+*.xlsx
+*.xls
+*.db
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite3
+*.zip
+*.gz
+*.7z
+*.tar
+data/
+samples/
+exports/
+*.wal
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# --- Node / build scratch ---
+node_modules/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.log
+*.tmp
+
+# --- Claude Code local settings ---
+.claude/settings.local.json
