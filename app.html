@@ -3112,7 +3112,8 @@ function sqlHtml(src,aliases){
   return out+esc(src.slice(last));
 }
 async function openSqlManager(opts){
-  opts=opts||{};var direct=!!opts.direct; // direct: report from a hand-written query, files are read by full path (no registration)
+  opts=opts||{};var direct=!!opts.direct,edit=opts.edit||null; // edit: a registered SQL view (REG entry) that is changed in place
+   // direct: report from a hand-written query, files are read by full path (no registration)
   try{await DB.ready}catch(e){}
   await Lib.load();
   var cur=null,running=false,colQ='';
@@ -3266,7 +3267,37 @@ async function openSqlManager(opts){
     cur.id=rec.id;
     Lib.save();renderList();
   };
+  // edit mode: validate the new SQL first (nothing is touched if it fails), then update the registered view and rebuild every sheet that uses it, keeping their layouts
+  var applyEdit=async function(){
+    var reg=[];
+    try{
+      readForm();validate();
+      if(!cur.name){flagReq(nameIn);throw new Error('Give the view a name first.')}
+      if(!cur.sql.trim())throw new Error('Write a SQL query first.');
+      if(REG.some(function(x){return x!==edit&&x.query&&x.name.toLowerCase()===cur.name.toLowerCase()}))throw new Error('Another registered SQL view already has this name.');
+      var uq=used(),q=cleanQuery(uq),qf=null;
+      if(!DB.native){qf=await queryFiles(uq,true);if(!qf)throw new Error('The files of this view are not accessible.')}
+      showMsg('Checking the query\u2026');
+      var nf=await namesFor(uq);reg=nf.reg;
+      await query('DESCRIBE SELECT * FROM ('+composeQuery(uq,nf.names)+'\n)');
+      var oldKey=regKey(edit),oldName=edit.name;
+      var users=tabs.filter(function(t){var fs=(t===curTab?S:t.S).files;return fs.length===1&&fs[0].query&&regKey(fs[0])===oldKey});
+      var lv=Lib.d.sql.filter(function(v){return v.name.toLowerCase()===oldName.toLowerCase()})[0];
+      if(lv){lv.name=cur.name;lv.sql=cur.sql;lv.tables=q.tables;lv.t=Date.now();Lib.save()}
+      edit.name=cur.name;edit.query=q;
+      if(back&&back.parentNode)back.remove();
+      var home=curTab;
+      for(var i=0;i<users.length;i++){
+        await switchTab(users[i]);
+        await openFiles([edit],{tab:users[i],state:serializeState(S),remapFrom:S.byId,qfiles:qf});
+      }
+      if(users.length&&tabs.indexOf(home)>=0&&curTab!==home)await switchTab(home);
+      syncReportBar();setStatus('SQL view \u201C'+edit.name+'\u201D updated'+(users.length?' \u2013 '+users.length+' sheet(s) refreshed.':'.'));
+    }catch(e){showMsg(e.message||String(e),true)}
+    finally{reg.forEach(function(n){try{DB.db.dropFile(n)}catch(e){}})}
+  };
   var act=async function(openAfter){
+    if(edit)return applyEdit();
     try{
       if(direct){readForm();validate();if(!cur.name)cur.name='SQL report'}else save();
       if(!openAfter){showMsg('Saved “'+cur.name+'”.');return}
@@ -3313,9 +3344,15 @@ async function openSqlManager(opts){
     nameIn.placeholder='Report name (optional)';
     main.children[1].innerHTML='<b>Report from SQL.</b> Write one SELECT query and read files by full path, e.g. <code>read_parquet(&#39;D:/data/sales/*.parquet&#39;)</code>, <code>read_csv(&#39;C:/x/data.csv&#39;)</code>, <code>read_json_auto(...)</code> or <code>read_xlsx(...)</code>. Folders can be read with a wildcard. Nothing is copied &ndash; the files are read in place.';
   }
-  var dlg=openDialog(direct?'New report from SQL':'Advanced – SQL views',el('div',{class:'sqm'},[side,main]),[{text:'Close',fn:function(){if(!direct)setTimeout(openDataSources,0)}}],'sqdlg');
+  if(edit){
+    side.children[0].style.display='none';side.children[1].style.display='none'; // no saved-views list: this edits one view
+    main.firstChild.querySelectorAll('.btn:not(.pri)').forEach(function(b){if(b.textContent!=='▶ Run preview'&&b.textContent!=='■ Stop')b.style.display='none'});
+    main.firstChild.querySelector('.btn.pri').textContent='Apply changes';
+    main.children[1].innerHTML='<b>Edit SQL view.</b> Change the query and press <b>Apply changes</b>: sheets that use this view are rebuilt and keep their layout where the fields still exist. The old definition stays in place if the new query fails.';
+  }
+  var dlg=openDialog(edit?'Edit SQL view':direct?'New report from SQL':'Advanced – SQL views',el('div',{class:'sqm'},[side,main]),[{text:'Close',fn:function(){if(!direct)setTimeout(openDataSources,0)}}],'sqdlg');
   back=dlg.parentNode;
-  load(blank());
+  load(edit?{id:null,name:edit.name,sql:edit.query.sql,tables:edit.query.tables}:blank());
   return {load:load};
 }
 
@@ -5126,13 +5163,14 @@ async function openDataSources(){
       var fm=f.query?'sql':fmtOf(f.name),where=f.query?'SQL view over '+f.query.tables.map(function(t){return t.name}).join(', '):(f.path||(f.size?fmtBytes(f.size):'')+' – opened from this computer');
       var use=fileUsage(f),users=use.all;
       var sheetBtn=el('button',{class:'btn ds-b',title:'Open a new sheet that uses this data file',html:'<svg viewBox="0 0 16 16"><path d="M3 2h7l3 3v9H3z"/><path d="M10 2v3h3M8 8v4M6 10h4"/></svg><span>Create new sheet</span>',onclick:function(e){e.stopPropagation();newSheet(f)}});
+      var editBtn=f.query?el('button',{class:'btn ds-b',title:'Edit the SQL of this view',html:'<svg viewBox="0 0 16 16"><path d="M3 13l1-3 7-7 2 2-7 7z"/><path d="M10 4l2 2"/></svg><span>Edit SQL</span>',onclick:function(e){e.stopPropagation();close();openSqlManager({edit:f})}}):null;
       var delBtn=el('button',{class:'btn ds-x',title:users.length?'Cannot be removed: still used by '+users.join(', '):'Remove this data file from the list',html:'<svg viewBox="0 0 16 16"><path d="M3.5 3.5l9 9m0-9l-9 9"/></svg>',onclick:function(e){e.stopPropagation();removeFile(f)}});
       if(users.length)delBtn.disabled=true;
       var row=el('div',{class:'ds-row'},[
         el('span',{class:'ficon '+fm,text:f.query?'SQL':ICO[fm]||'PQ'}),
         el('div',{style:'flex:1;min-width:0'},[el('div',{class:'nm',style:'font-weight:600',text:f.name}),el('div',{class:'fd-hint',style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:where,text:where}),
           users.length?el('div',{class:'fd-hint',style:'color:#217346',text:'In use: '+users.join(', ')}):null]),
-        sheetBtn,delBtn]);
+        editBtn,sheetBtn,delBtn]);
       row.addEventListener('dblclick',function(){newSheet(f)});
       list.appendChild(row);
     });
