@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="icon-192.png">
 <meta name="theme-color" content="#217346">
+<meta name="app-version" content="1.1.0">
 <style>
 :root{
   --green:#217346; --green-d:#185c37; --green-l:#e2efe7;
@@ -86,6 +87,7 @@ button,input,select{font:inherit;color:inherit}
 @keyframes pb{0%{left:-35%}100%{left:100%}}
 #status.working{background:repeating-linear-gradient(45deg,var(--green) 0 14px,var(--green-d) 14px 28px);background-size:40px 100%;animation:ps 1s linear infinite;font-weight:600}
 @keyframes ps{to{background-position:40px 0}}
+#sver{cursor:pointer;opacity:.9}#sver:hover{text-decoration:underline}#sver.upd{background:#ffd54a;color:#3b2d00;font-weight:600;padding:0 8px;border-radius:3px;opacity:1}
 #sstop{display:none;background:#fff;color:#a02020;border:none;border-radius:3px;font-size:12px;font-weight:600;padding:1px 12px;cursor:pointer}
 #status.working #sstop{display:inline-block}
 .spin{width:22px;height:22px;border:3px solid #cfe3d7;border-top-color:var(--green);border-radius:50%;animation:sp .8s linear infinite}
@@ -248,6 +250,8 @@ button,input,select{font:inherit;color:inherit}
 .sqm-res .tw{overflow:auto;max-height:40vh;border:1px solid #ddd;user-select:text;-webkit-user-select:text}
 .sqm-res table{border-collapse:collapse;font-size:12px}.sqm-res th,.sqm-res td{border:1px solid #e3e3e3;padding:2px 6px;white-space:nowrap;max-width:300px;overflow:hidden;text-overflow:ellipsis}
 .sqm-res th{background:#f3f3f3;position:sticky;top:0}
+.sqm-res th.rn,.sqm-res td.rn{text-align:right}
+.sqm-res td.rn{font-variant-numeric:tabular-nums}
 .sqm-res th small{display:block;font-weight:400;color:#7a8a80}
 .sqm .err{color:#b3261e}
 .sqm-adv{font-size:11.5px;color:#6b4e00;background:#fff6dc;border:1px solid #e8d49a;border-radius:6px;padding:5px 9px}
@@ -498,7 +502,7 @@ input[type=checkbox],input[type=radio]{width:15px;height:15px;margin:0 6px 0 0;v
     </div>
   </div>
   <div id="sheets"></div>
-  <div id="status"><span id="smsg">Ready</span><button id="sstop" title="Stop the running calculation">&#9632; Stop</button><span id="sfile"></span><span id="sinfo"></span><span id="sdim"></span></div>
+  <div id="status"><span id="smsg">Ready</span><button id="sstop" title="Stop the running calculation">&#9632; Stop</button><span id="sfile"></span><span id="sinfo"></span><span id="sver" title="About, version and updates"></span><span id="sdim"></span></div>
 </div>
 <input type="file" id="fileIn" accept=".parquet,.pq,.csv,.tsv,.txt,.json,.jsonl,.ndjson,.xlsx" multiple hidden>
 
@@ -557,6 +561,7 @@ function initEngine(){
         var info=await ri.json();DB.native={token:NN.token,info:info};
         setEng('Native engine ready \u2013 DuckDB '+info.version+', '+info.threads+' threads, memory limit '+info.memory+'.');
         $('#sinfo').textContent=engineLabel();
+        renderVer();        setTimeout(function(){loadUpdates(false)},1500);
         return true;
       }catch(e){DB.native=null}
     }
@@ -1945,6 +1950,69 @@ async function openDrill(rn,li){
     ready=true;if(ob)ob.disabled=false;
   }catch(e){showError(e)}
 }
+/* ====================================================================== version & updates */
+var APP_VERSION=(document.querySelector('meta[name=app-version]')||{}).content||'';
+var UPD=null;
+function nativeFetch(path,opt){opt=opt||{};opt.headers=Object.assign({'X-PP-Token':DB.native.token},opt.headers||{});
+  return fetch(path,opt).then(function(r){return r.json().then(function(j){if(!r.ok||j.error)throw new Error(j.error||('Engine error '+r.status));return j})})}
+function renderVer(){
+  var b=$('#sver');if(!b)return;
+  var any=UPD&&(UPD.app.available||UPD.duckdb.available);
+  b.className=any?'upd':'';
+  b.textContent='v'+APP_VERSION+(DB.native?' \u2022 DuckDB '+DB.native.info.version:'')+(any?'  \u2B06 Update available':'');
+}
+async function loadUpdates(refresh){
+  if(!DB.native)return null;
+  try{UPD=await nativeFetch('/api/updates'+(refresh?'?refresh=1':''))}catch(e){return null}
+  renderVer();
+  if(UPD.lastResult&&!UPD.shown){UPD.shown=true;setStatus((UPD.lastResult.ok?'Update installed: ':'Update problem: ')+UPD.lastResult.msg)}
+  return UPD;
+}
+async function applyUpdate(what){
+  if(!confirm('The engine restarts and this page reloads, so unsaved changes are lost.\nSave your report first if needed.\n\nUpdate now?'))return;
+  try{await nativeFetch('/api/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({what:what})})}catch(e){showError(e);return}
+  var back=el('div',{class:'dlgback',style:'z-index:99'},[el('div',{class:'dlg',style:'width:430px;padding:20px;align-items:center;text-align:center'},[
+    el('div',{class:'spin',style:'margin:0 auto 12px;width:34px;height:34px'}),
+    el('div',{style:'font-weight:600',text:'Updating\u2026'}),
+    el('div',{class:'fd-hint',text:'A separate window shows the progress. This page reloads automatically when the engine is back (usually under a minute, longer for large downloads).'})])]);
+  document.body.appendChild(back);
+  var down=false,t0=Date.now();
+  var poll=setInterval(function(){
+    fetch('/api/info',{cache:'no-store'}).then(function(){if(down){clearInterval(poll);location.reload()}},function(){down=true});
+    if(Date.now()-t0>900000){clearInterval(poll);back.remove();alert('The engine did not come back. Start it again with start-native.cmd.')}
+  },1500);
+}
+async function openAbout(){
+  var body=el('div',{class:'bd',style:'width:560px;max-width:94vw'});
+  var draw=function(){
+    body.innerHTML='';
+    var rowFor=function(name,cur,latest,avail,err){
+      var st=!DB.native?'':err==='offline'?'not checked (offline)':err&&!latest?'could not check':avail?'\u2B06 update available':latest?'up to date':'\u2026';
+      return el('tr',{},[el('td',{text:name,style:'padding:4px 14px 4px 0;font-weight:600'}),el('td',{text:cur?('v'+cur):'?',style:'padding:4px 14px'}),
+        el('td',{text:latest?('newest: v'+latest):'',style:'padding:4px 14px;color:#667'}),el('td',{text:st,style:'padding:4px 0;font-weight:600;color:'+(avail?'#9a6700':'#217346')})])};
+    var tb=el('table',{style:'border-collapse:collapse;margin:6px 0 10px'});
+    tb.appendChild(rowFor('Parquet Pivot',APP_VERSION,UPD&&UPD.app.latest,UPD&&UPD.app.available,UPD&&UPD.app.error));
+    if(DB.native)tb.appendChild(rowFor('DuckDB engine',DB.native.info.version,UPD&&UPD.duckdb.latest,UPD&&UPD.duckdb.available,UPD&&UPD.duckdb.error));
+    body.appendChild(tb);
+    if(!DB.native){body.appendChild(el('div',{class:'fd-hint',text:'You are using the browser engine (DuckDB-WASM, bundled in lib/). Updates are checked and installed by the native engine: start the application with start-native.cmd.'}));return}
+    if(!UPD){body.appendChild(el('div',{class:'fd-hint',text:'Checking for updates\u2026'}));return}
+    if(UPD.app.error==='offline'||UPD.duckdb.error==='offline')body.appendChild(el('div',{class:'fd-hint',text:'No internet connection – the update check was skipped. Everything else works as usual.'}));
+    ['app','duckdb'].forEach(function(k){if(UPD[k].error&&UPD[k].error!=='offline'&&!UPD[k].latest)body.appendChild(el('div',{class:'fd-hint err',text:(k==='app'?'Parquet Pivot':'DuckDB')+': could not check ('+UPD[k].error+')'}))});
+    if(UPD.lastResult)body.appendChild(el('div',{class:'fd-hint',text:'Last update: '+UPD.lastResult.msg}));
+    var what=['app','duckdb'].filter(function(k){return UPD[k].available});
+    var bar=el('div',{style:'display:flex;gap:8px;align-items:center;margin:8px 0'});
+    bar.appendChild(el('button',{class:'btn',text:'Check now',onclick:async function(){UPD=null;draw();await loadUpdates(true);draw()}}));
+    if(what.length)bar.appendChild(el('button',{class:'btn pri',text:'Update '+(what.length>1?'all':what[0]==='app'?'Parquet Pivot':'DuckDB')+' and restart',onclick:function(){applyUpdate(what)}}));
+    body.appendChild(bar);
+    var cb=el('input',{type:'checkbox'});cb.checked=!!UPD.autoUpdate;
+    cb.onchange=function(){UPD.autoUpdate=cb.checked;nativeFetch('/api/update-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({autoUpdate:cb.checked})}).catch(showError)};
+    body.appendChild(el('label',{style:'display:flex;gap:8px;align-items:center;margin-top:6px'},[cb,el('span',{text:'Install updates automatically when the engine starts (start-native.cmd)'})]));
+    body.appendChild(el('div',{class:'fd-hint',style:'margin-top:8px',text:'Checks contact github.com (Parquet Pivot) and pypi.org (DuckDB); no data or personal information is sent. Parquet Pivot is updated from '+(UPD.git?'its git clone (git pull)':'a download of the GitHub repository')+'; DuckDB with \u201Cpip install --upgrade duckdb\u201D.'}));
+  };
+  openDialog('About Parquet Pivot',body,[{text:'Close'}]);
+  draw();
+  if(DB.native){await loadUpdates(true);draw()}
+}
 function openDialog(title,body,buttons,cls){
   var back=el('div',{class:'dlgback'}),dmax=el('button',{class:'dmax',type:'button',title:'Maximize (or double-click the title bar)'}),dclose=el('button',{class:'dclose',type:'button',title:'Close'}),d=el('div',{class:'dlg '+(cls||''),style:'position:relative'},[el('h3',{},[el('span',{class:'dt',text:title}),el('span',{class:'dctl'},[dmax,dclose])]),body]);
   var IC_MAX='<svg width="10" height="10" viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor"/></svg>',
@@ -3011,6 +3079,14 @@ async function describeTable(t,interactive){
     SCHEMA[k]=d.map(function(r){return [r[0],r[1]]});return SCHEMA[k];
   }finally{reg.forEach(function(n){try{DB.db.dropFile(n)}catch(e){}})}
 }
+/* preview cell formatter for a column type: numbers get thousands separators (DECIMAL keeps its scale, floats show up to 6 decimals) and are right-aligned by the caller */
+function previewFmt(ty){
+  var t=String(ty).toUpperCase();
+  if(kindOf(t)!=='num')return null;
+  var m=/^DECIMAL\(\s*\d+\s*,\s*(\d+)\s*\)/.exec(t),isInt=/INT/.test(t)&&!/DECIMAL/.test(t);
+  var f=isInt?nf(0,true):m?nf(+m[1],true):new Intl.NumberFormat(undefined,{maximumFractionDigits:6,useGrouping:true});
+  return function(v){return typeof v==='number'&&isFinite(v)&&!(isInt&&Math.abs(v)>9007199254740991)?f.format(v):cellText(v)};
+}
 function cellText(v){
   if(v==null)return '';
   if(typeof v==='object')try{return JSON.stringify(v,function(k,x){return typeof x==='bigint'?Number(x):x})}catch(e){return String(v)}
@@ -3170,9 +3246,10 @@ async function openSqlManager(opts){
       var desc=await query('DESCRIBE SELECT * FROM ('+sql+'\n)');
       var rows=await query('SELECT * FROM ('+sql+'\n) LIMIT 100');
       var tb=el('table'),hr=el('tr');
-      desc.forEach(function(d){hr.appendChild(el('th',{},[d[0],el('small',{text:d[1]})]))});
+      var pf=desc.map(function(d){return previewFmt(d[1])});
+      desc.forEach(function(d,i){hr.appendChild(el('th',{class:pf[i]?'rn':''},[d[0],el('small',{text:d[1]})]))});
       tb.appendChild(el('thead',{},[hr]));
-      var bd=el('tbody');rows.forEach(function(r){var tr=el('tr');r.forEach(function(v){tr.appendChild(el('td',{text:cellText(v)}))});bd.appendChild(tr)});tb.appendChild(bd);
+      var bd=el('tbody');rows.forEach(function(r){var tr=el('tr');r.forEach(function(v,i){tr.appendChild(el('td',{class:pf[i]?'rn':'',text:pf[i]?pf[i](v):cellText(v)}))});bd.appendChild(tr)});tb.appendChild(bd);
       resBox.appendChild(el('div',{class:'tw'},[tb]));
       showMsg(desc.length+' column(s), '+(rows.length>=100?'first 100 rows shown':rows.length+' row(s)')+' – '+fmtMs(performance.now()-t0)+'. The pivot always uses the full result.');
     }catch(e){if(stopped||/INTERRUPT/i.test(e.message||''))showMsg('Stopped.');else showMsg(e.message||String(e),true);resBox.innerHTML=''}
@@ -5076,6 +5153,7 @@ function wire(){
   $('#bOpen').onclick=function(){openDataSources()};
   fi.onchange=function(){var f=Array.prototype.slice.call(fi.files);if(inputResolver){var r=inputResolver;inputResolver=null;r(f.length?{files:f,handles:null}:null)}else if(f.length)openFiles(f)};
   $('#bRefresh').onclick=function(){distinctCache={};rebuild()};
+  $('#sver').onclick=openAbout;renderVer();
   $('#bCancel').onclick=stopBusy;$('#sstop').onclick=stopBusy;
   $('#errx').onclick=function(){$('#err').hidden=true};
   var setPane=function(on){if(!on&&!inAnyLayout())return;paneOn=on;var has=S.files.length>0;$('#fieldpane').classList.toggle('hide',!(on&&has));$('#fpOpen').hidden=!(has&&!on);setTimeout(function(){Grid.layout();Grid.draw()},0)};

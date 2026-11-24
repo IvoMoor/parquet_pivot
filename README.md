@@ -107,3 +107,7 @@ The server listens on 127.0.0.1 only, requires a random token for every call and
 - **Layout**: report layout, subtotals, grand totals, repeat labels, show levels, field list. **Calculate & Format**, **Copy & Export**. *Settings* is the gear at the far right.
 - Field list: right-click a field > *Add to Rows / Columns / Filters / Values*.
 - SQL columns (Calculations > SQL Column) can force a type (text, whole/decimal number, date, …).
+### Version and updates
+
+The version (`<meta name="app-version">` at the top of `app.html`) and the DuckDB version are shown in the status bar; click them for the *About & updates* dialog. With the native engine the app checks GitHub (Parquet Pivot) and PyPI (DuckDB) for newer versions and can install them with one click (the engine restarts and the page reloads). Tick *Install updates automatically when the engine starts* to let `start-native.cmd` do it for you. To publish a new Parquet Pivot version, raise the `app-version` number in `app.html` and push to `main`.
+

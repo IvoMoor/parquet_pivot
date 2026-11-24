@@ -16,6 +16,7 @@ Security: listens on 127.0.0.1 only, every API call needs a random token that is
 page by this server, and requests with a foreign Host/Origin header are rejected.
 """
 import argparse, datetime, decimal, json, math, mimetypes, os, secrets, subprocess, sys, tempfile, threading, uuid
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -29,6 +30,10 @@ TOKEN = secrets.token_urlsafe(24)
 LOCK = threading.Lock()
 CON = None
 MAX_BODY = 32 * 1024 * 1024
+RESTART_ARGS = ['--no-browser']
+UPD = {'checked': 0, 'info': None}
+UPD_LOCK = threading.Lock()
+LAST_RESULT = None
 STATIC_OK = ('app.html', 'manifest.json', 'sw.js', 'icon-192.png', 'icon-512.png')
 
 
@@ -189,6 +194,42 @@ def list_dir(path):
     return {"path": path, "parent": parent, "sep": os.sep, "entries": entries, "places": places}
 
 
+import update as upd
+
+
+def updates_refresh(force=False):
+    """Newest Parquet Pivot / DuckDB versions (cached for 30 minutes; every part tolerates being offline)."""
+    with UPD_LOCK:
+        if not force and UPD['info'] and time.time() - UPD['checked'] < 1800:
+            return UPD['info']
+        info = upd.check()
+        info['duckdb']['current'] = duckdb.__version__  # the version actually loaded in this process
+        info['duckdb']['available'] = upd.newer(info['duckdb']['latest'], duckdb.__version__)
+        UPD['info'], UPD['checked'] = info, time.time()
+        return info
+
+
+def updates_payload(refresh):
+    info = updates_refresh(refresh)
+    return dict(info, autoUpdate=bool(upd.read_settings().get('autoUpdate')), lastResult=LAST_RESULT,
+                canUpdate=True, git=os.path.isdir(os.path.join(ROOT, '.git')))
+
+
+def start_update(what):
+    """Hands over to update.py in its own window and stops this engine (the loaded duckdb files cannot be replaced while running)."""
+    what = [w for w in what if w in ('app', 'duckdb')]
+    if not what:
+        raise ValueError("Nothing to update")
+    cmd = [sys.executable, os.path.join(ROOT, 'update.py'), '--apply', ','.join(what), '--wait-pid', str(os.getpid()), '--'] + RESTART_ARGS
+    kw = {'cwd': ROOT}
+    if sys.platform == 'win32':
+        kw['creationflags'] = 0x00000010 | 0x00000200  # CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP
+    else:
+        kw.update(start_new_session=True, stdin=subprocess.DEVNULL)
+    subprocess.Popen(cmd, **kw)
+    threading.Timer(0.6, lambda: os._exit(0)).start()
+
+
 def lib_path():
     base = os.environ.get('APPDATA') or os.path.join(os.path.expanduser('~'), '.config')
     return os.path.join(base, 'ParquetPivot', 'library.json')
@@ -266,6 +307,9 @@ class Handler(BaseHTTPRequestHandler):
                         threads = int(CON.execute("select current_setting('threads')").fetchone()[0])
                         mem = str(CON.execute("select current_setting('memory_limit')").fetchone()[0])
                     return self._json(200, {"version": duckdb.__version__, "threads": threads, "memory": mem, "platform": sys.platform, "decimal": decimal_sep()})
+                if p == '/api/updates':
+                    q = urllib.parse.parse_qs(u.query)
+                    return self._json(200, updates_payload(bool(q.get('refresh'))))
                 if p == '/api/lib':
                     return self._json(200, lib_read())
                 if p == '/api/ls':
@@ -310,6 +354,14 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n) or b'{}')
             if self.path in ('/api/query', '/api/exec'):
                 return self._json(200, run_sql(str(body.get('sql', ''))))
+            if self.path == '/api/update':
+                start_update(body.get('what') or [])
+                return self._json(200, {"ok": True})
+            if self.path == '/api/update-settings':
+                st = upd.read_settings()
+                st['autoUpdate'] = bool(body.get('autoUpdate'))
+                upd.write_settings(st)
+                return self._json(200, {"ok": True})
             if self.path == '/api/lib':
                 lib_write(body)
                 return self._json(200, {"ok": True})
@@ -360,6 +412,16 @@ def main():
     if srv is None:
         sys.exit("No free port found near %d." % a.port)
     srv.daemon_threads = True
+    RESTART_ARGS[:] = ['--no-browser', '--port', str(port)] + (['--memory', a.memory] if a.memory else []) + (['--threads', str(a.threads)] if a.threads else [])
+    global LAST_RESULT
+    rp = os.path.join(upd.settings_dir(), 'update-result.json')
+    try:  # the outcome of an update that just restarted this engine, reported once to the page
+        with open(rp, 'r', encoding='utf-8') as f:
+            LAST_RESULT = json.load(f)
+        os.remove(rp)
+    except Exception:
+        pass
+    threading.Thread(target=lambda: updates_refresh(True), daemon=True).start()
     url = 'http://127.0.0.1:%d/app.html' % port
     if a.files:
         url += '?' + '&'.join('open=' + urllib.parse.quote(os.path.abspath(f), safe='') for f in a.files)
