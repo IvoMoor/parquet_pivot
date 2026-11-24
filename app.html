@@ -1382,8 +1382,9 @@ var Grid=(function(){
     if(ch){G.bodyX=G.rhw.reduce(function(a,c){return a+c},0);layout()}
   }
   // row label cells for a record: [{col,text,indent,bold,exp:{key,depth,collapsed}|null}]
-  function rowLabel(rec,prev){
-    var pv=PV,n=pv.nR,out=[],rd=rec.rd;
+  // forceRep: exports always repeat the item labels (the Repeat setting only affects what is shown on screen)
+  function rowLabel(rec,prev,forceRep){
+    var pv=PV,n=pv.nR,out=[],rd=rec.rd,REP=forceRep||S.repeat;
     var isSub=rd<n,pos=subPos();
     if(rd===0){out.push({col:0,text:n===0?'Total':'Grand Total',indent:0,bold:true,exp:null});return out}
     var own=rec.l[rd-1],collapsed=false,exp=null,subShown=isSub&&fSub(pv.R[rd-1]);
@@ -1395,8 +1396,8 @@ var Grid=(function(){
     // ancestors (tabular form: group labels on the first detail row when no subtotal row carries them)
     for(var L=1;L<rd;L++){
       var fL=pv.R[L-1];
-      if(!(S.repeat||(S.form==='tabular'&&(!fSub(fL)||pos==='bottom'))))continue;
-      var show=S.repeat||!prev||prev.rd<L;
+      if(!(REP||(S.form==='tabular'&&(!fSub(fL)||pos==='bottom'))))continue;
+      var show=REP||!prev||prev.rd<L;
       if(!show){for(var i=0;i<L;i++)if(prev.l[i]!==rec.l[i]){show=true;break}}
       if(show){var ak=keyAt(rec.l.map(function(x){return x}),L);
         out.push({col:L-1,text:lab(rec.l[L-1]),indent:0,bold:false,exp:fSub(fL)?{key:ak,depth:L,collapsed:collapsedIn(S.collR,ak,L),anc:true}:null});}
@@ -4085,7 +4086,7 @@ function clipHtml(rows){
   rows.forEach(function(r){out.push('<tr>'+r.map(function(c){return typeof c==='string'?'<td>'+e(c)+'</td>':'<td x:num="'+c.x+'"'+(c.p?' style="mso-number-format:Percent"':'')+'>'+e(c.t)+'</td>'}).join('')+'</tr>')});
   out.push('</table></body></html>');return out.join('');
 }
-async function exportRange(r0,r1,c0,c1,numeric){
+async function exportRange(r0,r1,c0,c1,numeric,repeatLabels){
   var pv=PV,lines=[],nh=Grid.G.nh;
   var CH=1500;
   for(var a=r0;a<=r1;a+=CH){
@@ -4093,7 +4094,7 @@ async function exportRange(r0,r1,c0,c1,numeric){
     var blk=await fetchBlock(a+1,b+1,l0,l1<l0?l0:l1);
     for(var r=a;r<=b;r++){
       var rec=blk.byRn(r+1);if(!rec)continue;
-      var labs=Grid.rowLabel(rec,blk.byRn(r)),cells=[];
+      var labs=Grid.rowLabel(rec,blk.byRn(r),!!repeatLabels),cells=[];
       for(var c=c0;c<nh&&c<=c1;c++){var tx='';labs.forEach(function(x){if(x.col===c)tx=x.text});cells.push(tx)}
       for(var li=l0;c1>=nh&&li<=l1;li++){var cv=cellValue(blk,rec,li);cells.push(numeric?clipCell(cv):cv.text)}
       lines.push(cells);
@@ -4172,7 +4173,7 @@ async function eachRows(cb,label){
     var b=Math.min(N-1,a+CH-1),blk=await fetchBlock(a+1,b+1,0,Math.max(0,nl-1)),out=[];
     for(var r=a;r<=b;r++){
       var rec=blk.byRn(r+1);if(!rec)continue;
-      var labs=Grid.rowLabel(rec,blk.byRn(r)),vals=new Array(nl);
+      var labs=Grid.rowLabel(rec,blk.byRn(r),true),vals=new Array(nl);
       for(var li=0;li<nl;li++)vals[li]=cellValue(blk,rec,li);
       out.push({rec:rec,labs:labs,vals:vals});
     }
