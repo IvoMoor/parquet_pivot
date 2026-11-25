@@ -2090,7 +2090,9 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape')closePop()})
 var distinctCache={};
 function loadDistinct(f,search,cascade,extraCond){
   var x=f.expr,conds=cascade?buildWhereList(f.id):[];
-  if(search)conds.push('CAST('+x+' AS VARCHAR) ILIKE '+ql('%'+search.replace(/[%_\\]/g,'\\$&')+'%')+" ESCAPE '\\'");
+  // several search terms separated by ';' match members containing any one of them
+  var terms=String(search||'').split(';').map(function(t){return t.trim()}).filter(Boolean);
+  if(terms.length)conds.push('('+terms.map(function(t){return 'CAST('+x+' AS VARCHAR) ILIKE '+ql('%'+t.replace(/[%_\\]/g,'\\$&')+'%')+" ESCAPE '\\'"}).join(' OR ')+')');
   if(extraCond)conds.push(extraCond);
   var w=conds.length?' WHERE '+conds.join(' AND '):'',key=f.id+'|'+w;
   if(distinctCache[key])return distinctCache[key];
@@ -2285,7 +2287,9 @@ function openFilterDialog(fieldId){
   addPatBtn.addEventListener('click',addPat);patIn.addEventListener('keydown',function(e){if(e.key==='Enter')addPat()});
   patIn.addEventListener('input',debounce(loadLeft,250));patKind.addEventListener('change',loadLeft);
   searchIn.addEventListener('input',debounce(function(){st.q=searchIn.value;loadLeft()},220));
-  searchIn.addEventListener('paste',function(e){var t=(e.clipboardData||window.clipboardData).getData('text');if(isVals()&&/[\r\n\t]/.test(t.trim())){e.preventDefault();applyList(t)}});
+  searchIn.addEventListener('paste',function(e){var t=(e.clipboardData||window.clipboardData).getData('text');if(/[\r\n\t]/.test(t.trim())){e.preventDefault(); // cells copied from Excel: show them as DE;NL and search for each one
+    var seen={},parts=t.split(/[\r\n\t]+/).map(function(x){return x.trim()}).filter(function(x){if(!x||seen[x])return false;seen[x]=1;return true});
+    searchIn.value=parts.join(';');st.q=searchIn.value;loadLeft()}});
   pasteBtn.addEventListener('click',function(){pastePanel.style.display=pastePanel.style.display==='none'?'':'none';if(pastePanel.style.display==='')setTimeout(function(){pasteBox.focus()},0)});
   var applyList=async function(text){
     var seen=new Set(),vals=[];
@@ -2638,7 +2642,7 @@ function renderFieldList(){
       var it=[{head:f.name}],areas=f.custom&&f.custom.kind!=='sqlcol'?[['values','Add to Values']]:[['rows','Add to Rows'],['cols','Add to Columns'],['filters','Add to Filters'],['values','Add to Values']];
       areas.forEach(function(a){it.push({text:a[1],fn:function(){addTo(a[0],f.id,-1);afterAreaChange()}})});
       if(inAny(f.id))it.push('-',{text:'Remove from the report',fn:function(){removeEverywhere(f.id);renderAreas();renderFieldList();changed('build')}});
-      if(cu&&cu.kind!=='nrec')it.push('-',{text:'Edit\u2026',fn:function(){editCustom(cu)}},{text:'Delete',fn:function(){deleteCustom(f.id)}});
+      if(cu&&cu.kind!=='nrec')it.push('-',{text:'Edit\u2026',fn:function(){editCustom(cu)}},{text:'Copy\u2026',fn:function(){copyCustom(cu)}},{text:'Delete',fn:function(){deleteCustom(f.id)}});
       showMenu(it,e.clientX,e.clientY);
     });
     box.appendChild(row);
@@ -2652,7 +2656,7 @@ function removeEverywhere(id){removeFrom3(id);S.values=S.values.filter(function(
 function addTo(area,id,idx){
   if(area!=='values'&&fld(id)&&fld(id).kind==='measure')return;
   if(area==='values'){var it=newItem(fld(id));if(idx<0||idx>S.values.length)S.values.push(it);else S.values.splice(idx,0,it);return}
-  if(area==='filters'){if(S.filters.indexOf(id)>=0)return;if(idx<0||idx>S.filters.length)S.filters.push(id);else S.filters.splice(idx,0,id);return}
+  if(area==='filters'){if(S.filters.indexOf(id)>=0)return;if(idx<0||idx>S.filters.length)S.filters.push(id);else S.filters.splice(idx,0,id);pendFilter=id;return}
   [S.rows,S.cols].forEach(function(a){var i=a.indexOf(id);if(i>=0)a.splice(i,1)}); // a field can be in Rows or Columns, and in Filters as well
   var a=area==='rows'?S.rows:S.cols;
   if(APP.defSubtotals&&cfgOf(id).sub===undefined){cfgOf(id).sub=true;if(S.subtotals==='off')S.subtotals='top'}
@@ -4652,6 +4656,13 @@ function describeCustom(c){
     var o=RS_OPS.filter(function(o){return o[0]===x.cond.op})[0];return nm+' '+(o?o[1]:x.cond.op)+' '+x.cond.a+(x.cond.op==='between'?' and '+x.cond.b:'')}).join(' AND ');
 }
 function editCustom(c){if(c.kind==='nrec')return;if(c.kind==='calc')openCalcDialog(c);else if(c.kind==='sqlcol')openSqlColDialog(c);else openRestrictedDialog(c)}
+// copy a calculation: opens its dialog prefilled with a new unique name; nothing exists until OK is pressed
+function copyCustom(c){
+  if(c.kind==='nrec')return;
+  var d=JSON.parse(JSON.stringify(c)),base=c.name+' (copy)',nm=base,i=2;
+  while(nameTaken(nm))nm=c.name+' (copy '+(i++)+')';
+  d.id=null;d.name=nm;editCustom(d);
+}
 function openCalcManager(){
   var box=el('div',{class:'bd',style:'width:640px;max-width:92vw;min-height:120px'});
   var draw=function(){
@@ -4661,6 +4672,7 @@ function openCalcManager(){
       box.appendChild(el('div',{style:'display:flex;gap:8px;align-items:center;border-bottom:1px solid #eee;padding:6px 0'},[
         el('div',{style:'flex:1;min-width:0'},[el('div',{style:'font-weight:600',text:(c.kind==='calc'?'ƒx  ':c.kind==='sqlcol'?'SQL  ':'Σr  ')+c.name}),el('div',{style:'color:#666;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:describeCustom(c),text:describeCustom(c)})]),
         el('button',{class:'btn',text:'Edit',onclick:function(){close();editCustom(c)}}),
+        el('button',{class:'btn',text:'Copy',title:'Create a new calculation starting from this one',onclick:function(){close();copyCustom(c)}}),
         el('button',{class:'btn',text:'Delete',onclick:function(){deleteCustom(c.id);draw()}})]));
     });
   };
