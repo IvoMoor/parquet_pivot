@@ -5152,6 +5152,38 @@ async function openDataSources(){
     REG.splice(i,1);say('“'+f.name+'” removed.');
     draw();syncChrome();
   };
+  var previewData=async function(f){
+    var body=el('div',{class:'bd',style:'width:900px;max-width:94vw;height:460px;display:flex;flex-direction:column;gap:6px'});
+    var info=el('div',{class:'fd-hint',text:'⏳ Loading preview…'}),box=el('div',{style:'flex:1;min-height:0;overflow:auto'});
+    body.appendChild(info);body.appendChild(box);
+    openDialog('Preview – '+f.name,body,[{text:'Close'}],'dsdlg');
+    var reg=[];
+    try{
+      var src,t0=performance.now();
+      if(f.query){
+        var q=f.query,nm;
+        if(DB.native){if(q.tables.some(function(t){return !t.path}))throw new Error('Some files have no path. Register them again.');nm=q.tables.map(function(t){return t.path})}
+        else{var fs=await queryFiles(q,true);if(!fs)throw new Error('The files of this view are not accessible.');reg=await registerQuery(fs);nm=reg}
+        src='('+composeQuery(q,nm)+'\n)';
+      }else if(DB.native){
+        if(!f.path)throw new Error('This file has no path. Register it again.');
+        src=readSrc(f.path);
+      }else{
+        var fl=(typeof f.slice==='function')?[f]:await queryFiles({tables:[f]},true);
+        if(!fl)throw new Error('This file is not accessible. Register it again.');
+        reg=await registerQuery(fl);src=readSrc(reg[0]);
+      }
+      var desc=await query('DESCRIBE SELECT * FROM '+src);
+      var rows=await query('SELECT * FROM '+src+' LIMIT 100');
+      var tb=el('table'),hr=el('tr'),pf=desc.map(function(d){return previewFmt(d[1])});
+      desc.forEach(function(d,i){hr.appendChild(el('th',{class:pf[i]?'rn':''},[d[0],el('small',{text:d[1]})]))});
+      tb.appendChild(el('thead',{},[hr]));
+      var bd=el('tbody');rows.forEach(function(r){var tr=el('tr');r.forEach(function(v,i){tr.appendChild(el('td',{class:pf[i]?'rn':'',text:pf[i]?pf[i](v):cellText(v)}))});bd.appendChild(tr)});
+      tb.appendChild(bd);box.appendChild(el('div',{class:'tw'},[tb]));
+      info.textContent=desc.length+' column(s), '+(rows.length>=100?'first 100 rows shown':rows.length+' row(s)')+' – '+fmtMs(performance.now()-t0)+'.';
+    }catch(e){info.textContent=e.message||String(e);info.style.color='#b3261e'}
+    finally{reg.forEach(function(n){try{DB.db.dropFile(n)}catch(e){}})}
+  };
   var newSheet=async function(f){
     var nt=newTabObj(f.name.replace(/\.[A-Za-z0-9]+$/,''));nt.auto=false;tabs.push(nt);
     close();await switchTab(nt);await openFiles([f],{tab:nt});
@@ -5164,13 +5196,14 @@ async function openDataSources(){
       var use=fileUsage(f),users=use.all;
       var sheetBtn=el('button',{class:'btn ds-b',title:'Open a new sheet that uses this data file',html:'<svg viewBox="0 0 16 16"><path d="M3 2h7l3 3v9H3z"/><path d="M10 2v3h3M8 8v4M6 10h4"/></svg><span>Create new sheet</span>',onclick:function(e){e.stopPropagation();newSheet(f)}});
       var editBtn=f.query?el('button',{class:'btn ds-b',title:'Edit the SQL of this view',html:'<svg viewBox="0 0 16 16"><path d="M3 13l1-3 7-7 2 2-7 7z"/><path d="M10 4l2 2"/></svg><span>Edit SQL</span>',onclick:function(e){e.stopPropagation();close();openSqlManager({edit:f})}}):null;
+      var prevBtn=el('button',{class:'btn ds-b',title:'Show the first 100 rows of this data file',html:'<svg viewBox="0 0 16 16"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg><span>Preview Data</span>',onclick:function(e){e.stopPropagation();previewData(f)}});
       var delBtn=el('button',{class:'btn ds-x',title:users.length?'Cannot be removed: still used by '+users.join(', '):'Remove this data file from the list',html:'<svg viewBox="0 0 16 16"><path d="M3.5 3.5l9 9m0-9l-9 9"/></svg>',onclick:function(e){e.stopPropagation();removeFile(f)}});
       if(users.length)delBtn.disabled=true;
       var row=el('div',{class:'ds-row'},[
         el('span',{class:'ficon '+fm,text:f.query?'SQL':ICO[fm]||'PQ'}),
         el('div',{style:'flex:1;min-width:0'},[el('div',{class:'nm',style:'font-weight:600',text:f.name}),el('div',{class:'fd-hint',style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:where,text:where}),
           users.length?el('div',{class:'fd-hint',style:'color:#217346',text:'In use: '+users.join(', ')}):null]),
-        editBtn,sheetBtn,delBtn]);
+        editBtn,prevBtn,sheetBtn,delBtn]);
       row.addEventListener('dblclick',function(){newSheet(f)});
       list.appendChild(row);
     });
