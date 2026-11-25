@@ -103,7 +103,7 @@ button,input,select{font:inherit;color:inherit}
 .ds-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0 14px}
 .ds-x{padding:3px 7px}.ds-x svg{width:13px;height:13px;stroke:#8a3a3a;fill:none;stroke-width:1.8;stroke-linecap:round}.ds-x:hover{background:#fde7e9;border-color:#e8a2a8}
 .ficon{min-width:34px;height:24px;border-radius:6px;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 5px;flex:none;background:#217346}.ficon.csv{background:#2b6cb0}.ficon.json{background:#b7791f}.ficon.xlsx{background:#1d6f42}.ficon.sql{background:#6b4fa3}
-.ds-b{display:inline-flex;align-items:center;gap:6px}.ds-b svg{width:14px;height:14px;stroke:#217346;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.ds-b:disabled svg{stroke:#999}
+.ds-b{display:inline-flex;align-items:center;gap:6px}.ds-b svg{width:14px;height:14px;stroke:#217346;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.ds-b:disabled svg{stroke:#999}.btn.pri.ds-b svg{stroke:#fff}
 .ds-list{flex:1;overflow:auto;border:1px solid #d6dfd9;border-radius:6px;min-height:100px}
 .ds-row{display:flex;gap:10px;align-items:center;padding:8px 10px;border-bottom:1px solid #eef2ef;cursor:default}
 .ds-row:hover{background:#eef6f1}
@@ -5152,11 +5152,11 @@ async function openDataSources(){
     REG.splice(i,1);say('“'+f.name+'” removed.');
     draw();syncChrome();
   };
-  var previewData=async function(f){
+  var previewData=async function(f,prof){
     var body=el('div',{class:'bd',style:'width:900px;max-width:94vw;height:460px;display:flex;flex-direction:column;gap:6px'});
     var info=el('div',{class:'fd-hint',text:'⏳ Loading preview…'}),box=el('div',{style:'flex:1;min-height:0;overflow:auto'});
     body.appendChild(info);body.appendChild(box);
-    openDialog('Preview – '+f.name,body,[{text:'Close'}],'dsdlg');
+    openDialog((prof?'Profile – ':'Preview – ')+f.name,body,[{text:'Close'}],'dsdlg');
     var reg=[];
     try{
       var src,t0=performance.now();
@@ -5173,14 +5173,20 @@ async function openDataSources(){
         if(!fl)throw new Error('This file is not accessible. Register it again.');
         reg=await registerQuery(fl);src=readSrc(reg[0]);
       }
-      var desc=await query('DESCRIBE SELECT * FROM '+src);
-      var rows=await query('SELECT * FROM '+src+' LIMIT 100');
+      var desc,rows;
+      if(prof){
+        desc=['column_name','column_type','count','null_percentage','approx_unique','min','max','avg','std','q25','q50','q75'].map(function(n){return [n,'']});
+        rows=await query('SELECT column_name,column_type,count,null_percentage,approx_unique,min,max,avg,std,q25,q50,q75 FROM (SUMMARIZE SELECT * FROM '+src+')');
+      }else{
+        desc=await query('DESCRIBE SELECT * FROM '+src);
+        rows=await query('SELECT * FROM '+src+' LIMIT 100');
+      }
       var tb=el('table'),hr=el('tr'),pf=desc.map(function(d){return previewFmt(d[1])});
       desc.forEach(function(d,i){hr.appendChild(el('th',{class:pf[i]?'rn':''},[d[0],el('small',{text:d[1]})]))});
       tb.appendChild(el('thead',{},[hr]));
       var bd=el('tbody');rows.forEach(function(r){var tr=el('tr');r.forEach(function(v,i){tr.appendChild(el('td',{class:pf[i]?'rn':'',text:pf[i]?pf[i](v):cellText(v)}))});bd.appendChild(tr)});
       tb.appendChild(bd);box.appendChild(el('div',{class:'tw'},[tb]));
-      info.textContent=desc.length+' column(s), '+(rows.length>=100?'first 100 rows shown':rows.length+' row(s)')+' – '+fmtMs(performance.now()-t0)+'.';
+      info.textContent=prof?rows.length+' column(s) profiled over all rows – '+fmtMs(performance.now()-t0)+'.':desc.length+' column(s), '+(rows.length>=100?'first 100 rows shown':rows.length+' row(s)')+' – '+fmtMs(performance.now()-t0)+'.';
     }catch(e){info.textContent=e.message||String(e);info.style.color='#b3261e'}
     finally{reg.forEach(function(n){try{DB.db.dropFile(n)}catch(e){}})}
   };
@@ -5197,13 +5203,14 @@ async function openDataSources(){
       var sheetBtn=el('button',{class:'btn ds-b',title:'Open a new sheet that uses this data file',html:'<svg viewBox="0 0 16 16"><path d="M3 2h7l3 3v9H3z"/><path d="M10 2v3h3M8 8v4M6 10h4"/></svg><span>Create new sheet</span>',onclick:function(e){e.stopPropagation();newSheet(f)}});
       var editBtn=f.query?el('button',{class:'btn ds-b',title:'Edit the SQL of this view',html:'<svg viewBox="0 0 16 16"><path d="M3 13l1-3 7-7 2 2-7 7z"/><path d="M10 4l2 2"/></svg><span>Edit SQL</span>',onclick:function(e){e.stopPropagation();close();openSqlManager({edit:f})}}):null;
       var prevBtn=el('button',{class:'btn ds-b',title:'Show the first 100 rows of this data file',html:'<svg viewBox="0 0 16 16"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg><span>Preview Data</span>',onclick:function(e){e.stopPropagation();previewData(f)}});
+      var profBtn=el('button',{class:'btn ds-b',title:'Quick data profile: columns, types, null %, distinct count, min/max, average and quartiles',html:'<svg viewBox="0 0 16 16"><path d="M2 14V8M6 14V3M10 14V6M14 14V10"/></svg><span>Profile</span>',onclick:function(e){e.stopPropagation();previewData(f,true)}});
       var delBtn=el('button',{class:'btn ds-x',title:users.length?'Cannot be removed: still used by '+users.join(', '):'Remove this data file from the list',html:'<svg viewBox="0 0 16 16"><path d="M3.5 3.5l9 9m0-9l-9 9"/></svg>',onclick:function(e){e.stopPropagation();removeFile(f)}});
       if(users.length)delBtn.disabled=true;
       var row=el('div',{class:'ds-row'},[
         el('span',{class:'ficon '+fm,text:f.query?'SQL':ICO[fm]||'PQ'}),
         el('div',{style:'flex:1;min-width:0'},[el('div',{class:'nm',style:'font-weight:600',text:f.name}),el('div',{class:'fd-hint',style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap',title:where,text:where}),
           users.length?el('div',{class:'fd-hint',style:'color:#217346',text:'In use: '+users.join(', ')}):null]),
-        editBtn,prevBtn,sheetBtn,delBtn]);
+        editBtn,prevBtn,profBtn,sheetBtn,delBtn]);
       row.addEventListener('dblclick',function(){newSheet(f)});
       list.appendChild(row);
     });
