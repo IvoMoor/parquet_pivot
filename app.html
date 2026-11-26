@@ -297,6 +297,7 @@ button,input,select{font:inherit;color:inherit}
 #status{flex:none;height:24px;background:var(--green);color:#fff;display:flex;align-items:center;padding:0 12px;gap:18px;font-size:12px}
 #status span{white-space:nowrap}
 #status #smsg{flex:1;overflow:hidden;text-overflow:ellipsis}
+#status #ssel{font-weight:600}
 #status #sfile{max-width:46%;overflow:hidden;text-overflow:ellipsis;font-weight:600}
 .pop{position:fixed;z-index:50;background:#fff;border:1px solid #9e9e9e;box-shadow:0 4px 14px rgba(0,0,0,.28);min-width:180px;font-size:12px}
 .menu{padding:2px 0}
@@ -506,7 +507,7 @@ input[type=checkbox],input[type=radio]{width:15px;height:15px;margin:0 6px 0 0;v
     </div>
   </div>
   <div id="sheets"></div>
-  <div id="status"><span id="smsg">Ready</span><button id="sstop" title="Stop the running calculation">&#9632; Stop</button><span id="sfile"></span><span id="sinfo"></span><span id="sver" title="About, version and updates"></span><span id="sdim"></span></div>
+  <div id="status"><span id="smsg">Ready</span><button id="sstop" title="Stop the running calculation">&#9632; Stop</button><span id="ssel"></span><span id="sfile"></span><span id="sinfo"></span><span id="sver" title="About, version and updates"></span><span id="sdim"></span></div>
 </div>
 <input type="file" id="fileIn" accept=".parquet,.pq,.csv,.tsv,.txt,.json,.jsonl,.ndjson,.xlsx" multiple hidden>
 
@@ -1470,7 +1471,7 @@ var Grid=(function(){
   function hclip(t,x,y,w){ctx.save();ctx.beginPath();ctx.rect(x,y,w,HDRH);ctx.clip();ctx.fillText(t,x+8,y+HDRH/2+.5);ctx.restore()}
   function draw(){
     if(!PV||!W)return;
-    var pv=PV;scrollMap();
+    var pv=PV;scrollMap();selChanged(sel?extra.concat([sel]):[]);
     ctx.setTransform(dpr,0,0,dpr,0,0);
     ctx.clearRect(0,0,W,H);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
     ctx.textBaseline='middle';
@@ -4248,6 +4249,34 @@ async function copySelection(){
       return {text:lines.join('\r\n'),html:n<=1000000?clipHtml(hrows):null}},n<=1000000);
     setStatus('Copied '+fmtInt(n)+' cell(s) to the clipboard');
   }catch(e){showError(e)}
+}
+/* status bar: number of selected cells and, when all of them are numbers, their sum */
+var selKey='',selTok=0,selTimer=0;
+function selChanged(rects){
+  var key=rects.map(function(x){return [x.r0,x.r1,x.c0,x.c1].join(',')}).join(';');
+  if(key===selKey)return;selKey=key;
+  clearTimeout(selTimer);var my=++selTok,box=$('#ssel');
+  if(!rects.length){box.textContent='';box.title='';return}
+  selTimer=setTimeout(function(){selStats(rects,my)},150);
+}
+async function selStats(rects,my){
+  var box=$('#ssel'),area=0;
+  rects.forEach(function(x){area+=(Math.abs(x.r1-x.r0)+1)*(Math.abs(x.c1-x.c0)+1)});
+  var show=function(cnt,sum){box.textContent='Count: '+fmtInt(cnt)+(sum==null?'':'   Sum: '+new Intl.NumberFormat(undefined,{maximumFractionDigits:4}).format(sum));box.title=sum==null?'Number of selected cells':'Number of selected cells and the sum of their values'};
+  if(!PV||area>500000){show(area,null);return}
+  try{
+    var seen=new Set(),sum=0,nums=0,text=0,nh=Grid.G.nh;
+    for(var i=0;i<rects.length;i++){
+      var x=rects[i],r0=Math.min(x.r0,x.r1),c0=Math.min(x.c0,x.c1),lines=await exportRange(r0,Math.max(x.r0,x.r1),c0,Math.max(x.c0,x.c1),true);
+      if(my!==selTok)return;
+      lines.forEach(function(l,ri){l.forEach(function(c,ci){
+        var k=(r0+ri)*100000+c0+ci;if(seen.has(k))return;seen.add(k);
+        if(typeof c==='string'){if(c!=='')text++}else{var n=Number(c.x);if(isFinite(n)){sum+=n;nums++}else text++}
+      })});
+    }
+    if(my!==selTok)return;
+    show(seen.size,nums>0&&text===0?sum:null);
+  }catch(e){if(my===selTok)show(area,null)}
 }
 /* shared pivot -> table helpers */
 function exportHeader(merged){
