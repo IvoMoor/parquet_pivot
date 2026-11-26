@@ -2704,17 +2704,23 @@ function showTrash(){
     trashEl=el('div',{id:'trash',text:'✕  Drop here to remove'});
     trashEl.addEventListener('dragover',function(e){e.preventDefault();e.dataTransfer.dropEffect='move';trashEl.classList.add('over')});
     trashEl.addEventListener('dragleave',function(){trashEl.classList.remove('over')});
-    trashEl.addEventListener('drop',function(e){
+    var removeDragged=function(e){
       e.preventDefault();var dc=dragChip;dragChip=null;hideTrash();
       if(!dc)return;var a=arr(dc.area);if(dc.i<0||dc.i>=a.length)return;
       a.splice(dc.i,1);afterAreaChange();
-    });
+    };
+    trashEl.addEventListener('drop',removeDragged);
+    // the field list above is a remove target too
+    var fl=$('#flist');
+    fl.addEventListener('dragover',function(e){if(!dragChip)return;e.preventDefault();e.dataTransfer.dropEffect='move';fl.classList.add('dropdel');trashEl.classList.add('over')});
+    fl.addEventListener('dragleave',function(e){if(fl.contains(e.relatedTarget))return;fl.classList.remove('dropdel');trashEl.classList.remove('over')});
+    fl.addEventListener('drop',function(e){if(!dragChip)return;fl.classList.remove('dropdel');removeDragged(e)});
     fp.appendChild(trashEl);
   }
   var r=lab.getBoundingClientRect(),b=fp.getBoundingClientRect();
   trashEl.style.cssText='display:flex;left:'+(r.left-b.left+4)+'px;top:'+(r.top-b.top-1)+'px;width:'+(r.width-8)+'px;height:'+(r.height+2)+'px';
 }
-function hideTrash(){if(trashEl){trashEl.classList.remove('over');trashEl.style.display='none'}}
+function hideTrash(){var fl0=$('#flist');if(fl0)fl0.classList.remove('dropdel');if(trashEl){trashEl.classList.remove('over');trashEl.style.display='none'}}
 function moveChip(from,fi,to,ti){
   var item=arr(from)[fi];
   if(to!=='values'&&from==='values'&&fld(item.fieldId).kind==='measure')return;
