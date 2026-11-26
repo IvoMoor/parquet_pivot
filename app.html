@@ -2271,7 +2271,11 @@ function openFilterDialog(fieldId){
   // ---- right list
   var renderRight=function(){
     rightEl.innerHTML='';var items,words;
-    if(isVals())items=st.vals.map(function(v){return tn(v)});
+    if(isVals()){ // keep the chosen members in alphabetical order (blank last); the remove buttons index into st.vals
+      var col=new Intl.Collator(undefined,{numeric:true,sensitivity:'base'});
+      st.vals.sort(function(a,b){return a===b?0:a===NULLK?1:b===NULLK?-1:col.compare(a,b)||(a<b?-1:1)});
+      items=st.vals.map(function(v){return tn(v)});
+    }
     else if(isRange())items=st.ranges.map(function(r){return (r.from===''||r.from==null?'\u2026':r.from)+'   \u2192   '+(r.to===''||r.to==null?'\u2026':r.to)});
     else items=st.pats.map(function(p){return ({contains:'contains',begins:'begins with',ends:'ends with',wild:'matches'})[p.k]+' \u201C'+p.p+'\u201D'});
     var lim=Math.min(items.length,2000),frag=document.createDocumentFragment();
