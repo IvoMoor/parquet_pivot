@@ -2305,6 +2305,20 @@ function openFilterDialog(fieldId){
   searchIn.addEventListener('paste',function(e){var t=(e.clipboardData||window.clipboardData).getData('text');if(/[\r\n\t]/.test(t.trim())){e.preventDefault(); // cells copied from Excel: show them as DE;NL and search for each one
     var seen={},parts=t.split(/[\r\n\t]+/).map(function(x){return x.trim()}).filter(function(x){if(!x||seen[x])return false;seen[x]=1;return true});
     searchIn.value=parts.join(';');st.q=searchIn.value;loadLeft()}});
+  // Enter in the search box adds the member that equals the typed text (each ';'-separated term; case-insensitive) to the filter
+  searchIn.addEventListener('keydown',async function(e){
+    if(e.key!=='Enter'||!isVals())return;e.preventDefault();
+    var terms=searchIn.value.split(';').map(function(t){return t.trim()}).filter(Boolean);if(!terms.length)return;
+    var r;try{r=await loadDistinct(f,terms.join(';'),st.cascade)}catch(x){return}
+    var nt=(APP.nullText||'(blank)').toLowerCase(),out=[];
+    terms.forEach(function(t){
+      var lt=t.toLowerCase(),m=r.vals.filter(function(v){return (v===NULLK?nt:v.toLowerCase())===lt});
+      if(!m.length){var p=r.vals.filter(function(v){return v!==NULLK&&v.toLowerCase().indexOf(lt)>=0});if(terms.length===1&&p.length===1)m=p} // a single partial hit counts as the one you meant
+      m.forEach(function(v){if(out.indexOf(v)<0)out.push(v)});
+    });
+    if(!out.length){leftNote.textContent='No member equals “'+searchIn.value+'”.';return}
+    addVals(out);searchIn.value='';st.q='';loadLeft();
+  });
   pasteBtn.addEventListener('click',function(){pastePanel.style.display=pastePanel.style.display==='none'?'':'none';if(pastePanel.style.display==='')setTimeout(function(){pasteBox.focus()},0)});
   var applyList=async function(text){
     var seen=new Set(),vals=[];
