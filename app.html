@@ -284,7 +284,7 @@ button,input,select{font:inherit;color:inherit}
 .chip i{font-style:normal;cursor:pointer;padding:0 3px;color:#555}
 .chip i:hover{background:#d6e7dd}
 .chip.ins{border-top:2px solid var(--green)}
-.xchip{display:flex;align-items:center;justify-content:space-between;gap:4px;border:1px dashed #8fb79e;background:#f1f8f4;padding:1px 3px 1px 6px;margin:2px;cursor:pointer;white-space:nowrap;font-style:italic}
+.xchip{display:flex;align-items:center;justify-content:space-between;gap:4px;border:1px dashed #8fb79e;background:#f1f8f4;padding:1px 3px 1px 6px;margin:2px;cursor:pointer;white-space:nowrap}
 .xchip .cn{display:flex;align-items:center;gap:4px;overflow:hidden}
 .xchip i{font-style:normal;cursor:pointer;padding:0 3px;color:#555}
 .xchip i:hover{background:#d6e7dd}
@@ -783,6 +783,15 @@ var TOPGUARD=false;
 function buildWhereList(skip){var w=[];S.fields.forEach(function(f){var c=S.cfg[f.id];if(c&&f.id!==skip&&(c.filter||c.cond||c.sql||c.topn||(c.rf&&c.rf.items.length)))fieldWhere(f).forEach(function(s){w.push(s)})});return w}
 function buildWhere(){var w=buildWhereList();return w.length?' WHERE '+w.join(' AND '):''}
 function clearFilterCfg(cf){delete cf.filter;delete cf.cond;delete cf.rf;delete cf.sql;delete cf.topn}
+// like filterSummary, but lists the chosen members (used in the field pane, where the text is cut off with … when it does not fit)
+function filterDetail(id){
+  var fl=cfgOf(id).filter;
+  if(fl&&fl.set&&fl.set.length>1){
+    var names=fl.set.map(function(v){return lab(v===NULLK?'':v)}).join(', ');
+    return (fl.mode==='include'?'':'Not ')+names;
+  }
+  return filterSummary(id);
+}
 function filterSummary(id){
   var c=cfgOf(id);
   if(c.rf&&c.rf.items.length){var it=c.rf.items,pre=c.rf.neg?'Not ':'';
@@ -2663,7 +2672,7 @@ function addTo(area,id,idx){
   if(idx<0||idx>a.length)a.push(id);else a.splice(idx,0,id);
 }
 function arr(area){return area==='rows'?S.rows:area==='cols'?S.cols:area==='filters'?S.filters:S.values}
-var pendFilter=null;
+var pendFilter=null,dragChip=null;
 function moveChip(from,fi,to,ti){
   var item=arr(from)[fi];
   if(to!=='values'&&from==='values'&&fld(item.fieldId).kind==='measure')return;
@@ -2682,15 +2691,15 @@ function renderAreas(){
       var isV=area==='values',name=isV?itemName(x):fld(x).name;
       var btn=el('i',{text:'▾','data-pop':1,onclick:function(e){e.stopPropagation();chipMenu(area,i,e.clientX,e.clientY)}});
       var flt=area!=='values'&&fieldFiltered(x);
-      var chip=el('div',{class:'chip'+(flt?' flt':''),draggable:'true','data-i':i,title:name+(flt?' (filtered)':'')},[el('span',{class:'cn'},[flt?funnelEl():null,el('span',{text:name,style:'overflow:hidden;text-overflow:ellipsis'})]),btn]);
-      chip.addEventListener('dragstart',function(e){e.dataTransfer.setData('text/plain',JSON.stringify({kind:'chip',area:area,i:i}));e.dataTransfer.effectAllowed='move'});
+      var chip=el('div',{class:'chip'+(flt?' flt':''),draggable:'true','data-i':i,title:name+(flt?' (filtered)':'')},[el('span',{class:'cn'},[flt?funnelEl():null,el('span',{text:name+(flt?' – '+filterDetail(x):''),style:'overflow:hidden;text-overflow:ellipsis'})]),btn]);
+      chip.addEventListener('dragstart',function(e){dragChip={area:area,i:i};e.dataTransfer.setData('text/plain',JSON.stringify({kind:'chip',area:area,i:i}));e.dataTransfer.effectAllowed='move'});
       chip.addEventListener('dblclick',function(){if(isV)openValueSettings(x);else{var r=chip.getBoundingClientRect();openFieldMenu(x,r.left,r.bottom)}});
       zone.appendChild(chip);
       if(flt)attachFilterTip(chip,x);
     });
     if(area==='filters')extraFilterIds().forEach(function(id){ // filters set from a row/column field (or a field that is not shown)
       var f=fld(id),where=S.rows.indexOf(id)>=0?'Rows':(S.cols.indexOf(id)>=0?'Columns':'not shown');
-      var x=el('div',{class:'xchip',title:'Filter applied on '+f.name+' ('+where+') \u2013 click to change'},[el('span',{class:'cn'},[funnelEl(),el('span',{text:f.name+' \u2013 '+filterSummary(id),style:'overflow:hidden;text-overflow:ellipsis'})]),
+      var x=el('div',{class:'xchip',title:'Filter applied on '+f.name+' ('+where+') \u2013 click to change'},[el('span',{class:'cn'},[funnelEl(),el('span',{text:f.name+' \u2013 '+filterDetail(id),style:'overflow:hidden;text-overflow:ellipsis'})]),
         el('i',{text:'\u2715',title:'Clear this filter',onclick:function(e){e.stopPropagation();clearFieldFilter(id)}})]);
       x.addEventListener('click',function(){openFilterDialog(id)});attachFilterTip(x,id);
       zone.appendChild(x);
@@ -2736,7 +2745,16 @@ function setupDnD(){
     });
   });
   // drop a chip outside any area -> remove
-  document.addEventListener('dragend',function(e){});
+  // dragging a chip out of the field pane (and dropping it nowhere) removes the field from its area, like Remove Field
+  document.addEventListener('dragend',function(e){
+    var dc=dragChip;dragChip=null;
+    if(!dc||e.dataTransfer.dropEffect!=='none')return;
+    var fp=$('#fieldpane'),r=fp&&fp.getBoundingClientRect();
+    if(!r||(e.clientX===0&&e.clientY===0)||e.clientX<0||e.clientY<0||e.clientX>innerWidth||e.clientY>innerHeight)return; // cancelled with Esc / left the window
+    if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom)return;
+    var a=arr(dc.area);if(dc.i<0||dc.i>=a.length)return;
+    a.splice(dc.i,1);afterAreaChange();
+  });
 }
 
 /* ====================================================================== files */
