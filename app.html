@@ -367,7 +367,9 @@ button,input,select{font:inherit;color:inherit}
 .chip .cn{display:flex;align-items:center;overflow:hidden}
 .fchip.flt .v{border-color:var(--green);background:#e6f2ec}
 .fchip.neg .v{background:#fbeaea}.chip.neg{background:#fbeaea}
-.chip.xchip{cursor:pointer}
+.chip.xchip{cursor:pointer;border-style:solid}
+#trash{position:absolute;z-index:20;display:none;align-items:center;justify-content:center;border:2px dashed #c0392b;background:#fdecea;color:#a4262c;font-weight:600;font-size:12px;border-radius:4px}
+#trash.over{background:#f6c9c4}
 #hidebar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:5px 10px;background:#fff6dc;border-bottom:1px solid #e8d49a;color:#6b4e00}
 #hidebar .hchip{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #e0c36a;padding:1px 4px 1px 8px;border-radius:10px}
 #hidebar .hchip i{font-style:normal;cursor:pointer;padding:0 4px;border-radius:8px;color:#8a5a00}
@@ -493,7 +495,7 @@ input[type=checkbox],input[type=radio]{width:15px;height:15px;margin:0 6px 0 0;v
       <input id="fsearch" type="text" placeholder="Search" autocomplete="off">
       <div id="flist"></div>
       <div id="fpsplit2" title="Drag to resize the areas (double-click to reset)"></div>
-      <div class="fp-s" style="padding-top:2px">Drag fields between areas below:</div>
+      <div class="fp-s" id="fplab" style="padding-top:2px">Drag fields between areas below:</div>
       <div id="areas">
         <div class="area" data-area="filters"><h4>&#9660; Filters</h4><div class="zone"></div></div>
         <div class="area" data-area="cols"><h4>&#9776; Columns</h4><div class="zone"></div></div>
@@ -2676,7 +2678,25 @@ function addTo(area,id,idx){
   if(idx<0||idx>a.length)a.push(id);else a.splice(idx,0,id);
 }
 function arr(area){return area==='rows'?S.rows:area==='cols'?S.cols:area==='filters'?S.filters:S.values}
-var pendFilter=null,dragChip=null;
+var pendFilter=null,dragChip=null,trashEl=null;
+// while a chip is dragged, a "remove" target appears over the hint line above the areas
+function showTrash(){
+  var fp=$('#fieldpane'),lab=$('#fplab');if(!fp||!lab)return;
+  if(!trashEl){
+    trashEl=el('div',{id:'trash',text:'✕  Drop here to remove'});
+    trashEl.addEventListener('dragover',function(e){e.preventDefault();e.dataTransfer.dropEffect='move';trashEl.classList.add('over')});
+    trashEl.addEventListener('dragleave',function(){trashEl.classList.remove('over')});
+    trashEl.addEventListener('drop',function(e){
+      e.preventDefault();var dc=dragChip;dragChip=null;hideTrash();
+      if(!dc)return;var a=arr(dc.area);if(dc.i<0||dc.i>=a.length)return;
+      a.splice(dc.i,1);afterAreaChange();
+    });
+    fp.appendChild(trashEl);
+  }
+  var r=lab.getBoundingClientRect(),b=fp.getBoundingClientRect();
+  trashEl.style.cssText='display:flex;left:'+(r.left-b.left+4)+'px;top:'+(r.top-b.top-1)+'px;width:'+(r.width-8)+'px;height:'+(r.height+2)+'px';
+}
+function hideTrash(){if(trashEl){trashEl.classList.remove('over');trashEl.style.display='none'}}
 function moveChip(from,fi,to,ti){
   var item=arr(from)[fi];
   if(to!=='values'&&from==='values'&&fld(item.fieldId).kind==='measure')return;
@@ -2695,8 +2715,8 @@ function renderAreas(){
       var isV=area==='values',name=isV?itemName(x):fld(x).name;
       var btn=el('i',{text:'▾','data-pop':1,onclick:function(e){e.stopPropagation();chipMenu(area,i,e.clientX,e.clientY)}});
       var flt=area!=='values'&&fieldFiltered(x);
-      var fdet=flt&&area==='filters',chip=el('div',{class:'chip'+(flt?' flt':'')+(fdet&&filterNeg(x)?' neg':''),draggable:'true','data-i':i,title:name+(flt?' (filtered)':'')},[el('span',{class:'cn'},[flt?funnelEl():null,el('span',{text:name+(fdet?' – '+filterDetail(x):''),style:'overflow:hidden;text-overflow:ellipsis'})]),btn]);
-      chip.addEventListener('dragstart',function(e){dragChip={area:area,i:i};e.dataTransfer.setData('text/plain',JSON.stringify({kind:'chip',area:area,i:i}));e.dataTransfer.effectAllowed='move'});
+      var flt0=flt;flt=flt&&area==='filters';var fdet=flt,chip=el('div',{class:'chip'+(flt?' flt':'')+(fdet&&filterNeg(x)?' neg':''),draggable:'true','data-i':i,title:name+(flt?' (filtered)':'')},[el('span',{class:'cn'},[flt?funnelEl():null,el('span',{text:name+(fdet?' – '+filterDetail(x):''),style:'overflow:hidden;text-overflow:ellipsis'})]),btn]);
+      chip.addEventListener('dragstart',function(e){dragChip={area:area,i:i};showTrash();e.dataTransfer.setData('text/plain',JSON.stringify({kind:'chip',area:area,i:i}));e.dataTransfer.effectAllowed='move'});
       chip.addEventListener('dblclick',function(){if(isV)openValueSettings(x);else{var r=chip.getBoundingClientRect();openFieldMenu(x,r.left,r.bottom)}});
       zone.appendChild(chip);
       if(flt)attachFilterTip(chip,x);
@@ -2749,16 +2769,7 @@ function setupDnD(){
     });
   });
   // drop a chip outside any area -> remove
-  // dragging a chip out of the field pane (and dropping it nowhere) removes the field from its area, like Remove Field
-  document.addEventListener('dragend',function(e){
-    var dc=dragChip;dragChip=null;
-    if(!dc||e.dataTransfer.dropEffect!=='none')return;
-    var fp=$('#fieldpane'),r=fp&&fp.getBoundingClientRect();
-    if(!r||(e.clientX===0&&e.clientY===0)||e.clientX<0||e.clientY<0||e.clientX>innerWidth||e.clientY>innerHeight)return; // cancelled with Esc / left the window
-    if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom)return;
-    var a=arr(dc.area);if(dc.i<0||dc.i>=a.length)return;
-    a.splice(dc.i,1);afterAreaChange();
-  });
+  document.addEventListener('dragend',function(){dragChip=null;hideTrash()});
 }
 
 /* ====================================================================== files */
