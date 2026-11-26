@@ -1738,7 +1738,7 @@ var Grid=(function(){
       d.on=true;d.ghost=document.createElement('div');d.ghost.textContent=PV.R[d.col].name;
       d.ghost.style.cssText='position:fixed;z-index:10000;pointer-events:none;padding:2px 10px;background:#217346;color:#fff;border-radius:4px;opacity:.92;box-shadow:0 2px 8px rgba(0,0,0,.3)';
       document.body.appendChild(d.ghost);
-      dz.style.top=(G.hr*HDRH)+'px';dz.classList.add('passive');dz.hidden=false;showTrash();
+      dz.style.top=(G.hr*HDRH)+'px';dz.classList.add('passive');dz.hidden=false;showTrash(true);
     }
     d.ghost.style.left=(e.clientX+12)+'px';d.ghost.style.top=(e.clientY+8)+'px';
     var r=cv.getBoundingClientRect(),px=e.clientX-r.left,py=e.clientY-r.top;
@@ -2696,9 +2696,10 @@ function addTo(area,id,idx){
   if(idx<0||idx>a.length)a.push(id);else a.splice(idx,0,id);
 }
 function arr(area){return area==='rows'?S.rows:area==='cols'?S.cols:area==='filters'?S.filters:S.values}
-var pendFilter=null,dragChip=null,trashEl=null;
+var pendFilter=null,dragChip=null,trashEl=null,trashMouse=false,trashT=0;
 // while a chip is dragged, a "remove" target appears over the hint line above the areas
-function showTrash(){
+function showTrash(mouse){
+  trashMouse=!!mouse;trashT=Date.now(); // true while a grid header is dragged with the mouse (mouse events keep coming then)
   var fp=$('#fieldpane'),lab=$('#fplab');if(!fp||!lab)return;
   if(!trashEl){
     trashEl=el('div',{id:'trash',text:'✕  Drop here to remove'});
@@ -2720,7 +2721,7 @@ function showTrash(){
   var r=lab.getBoundingClientRect(),b=fp.getBoundingClientRect();
   trashEl.style.cssText='display:flex;left:'+(r.left-b.left+4)+'px;top:'+(r.top-b.top-1)+'px;width:'+(r.width-8)+'px;height:'+(r.height+2)+'px';
 }
-function hideTrash(){var fl0=$('#flist');if(fl0)fl0.classList.remove('dropdel');if(trashEl){trashEl.classList.remove('over');trashEl.style.display='none'}}
+function hideTrash(){trashMouse=false;var fl0=$('#flist');if(fl0)fl0.classList.remove('dropdel');if(trashEl){trashEl.classList.remove('over');trashEl.style.display='none'}}
 function moveChip(from,fi,to,ti){
   var item=arr(from)[fi];
   if(to!=='values'&&from==='values'&&fld(item.fieldId).kind==='measure')return;
@@ -2793,7 +2794,10 @@ function setupDnD(){
     });
   });
   // drop a chip outside any area -> remove
-  document.addEventListener('dragend',function(){dragChip=null;hideTrash()});
+  // the dragged chip is re-rendered after a drop, so its own dragend may never arrive: also hide on any drop, and on the first mouse move afterwards (none are sent while a drag is running)
+  document.addEventListener('dragend',function(){dragChip=null;hideTrash()},true);
+  document.addEventListener('drop',function(){setTimeout(function(){dragChip=null;hideTrash()},0)},true);
+  ['mousemove','pointerdown','keydown'].forEach(function(t){document.addEventListener(t,function(){if(trashEl&&trashEl.style.display!=='none'&&!trashMouse&&Date.now()-trashT>400){dragChip=null;hideTrash()}},true)});
 }
 
 /* ====================================================================== files */
