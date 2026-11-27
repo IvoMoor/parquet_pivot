@@ -4581,14 +4581,15 @@ function openCalcDialog(def){
   var body=el('div',{class:'bd',style:'width:560px;max-width:90vw'},[
     el('div',{class:'grid2'},[el('label',{text:'Name:'}),nameIn]),
     el('label',{text:'Formula:'}),fx,
-    el('div',{style:'display:flex;gap:8px;margin-top:6px'},[fSel,mSel]),
+    el('div',{style:'display:flex;gap:8px;margin-top:6px;align-items:center'},[fSel,mSel,el('span',{style:'flex:1'}),el('button',{class:'btn',text:'Test formula',title:'Check the formula without saving',onclick:function(){testCalc()}})]),
+    el('div',{style:'color:#7a5200;background:#fff6dd;border:1px solid #ecd28a;padding:5px 8px;margin-top:8px;font-size:11.5px',html:'This works on <b>measures</b> (numbers). To derive a new <b>text, date or number field per record</b> &ndash; e.g. the first 4 characters of an account, <code>LEFT("G/L Account", 4)</code> &ndash; use <b>Calculations &#9662; Calculated Column</b>.'}),
     el('div',{style:'color:#666;margin-top:10px;font-size:11.5px;line-height:1.5'},[
       el('div',{html:'Works on <b>aggregated</b> values, like an Excel calculated field (subtotals and grand totals are calculated correctly). Put field and measure names in <b>[brackets]</b>; a bare field means its SUM.'}),
       el('div',{html:'Examples: <code>[Sum of amount] / [Sum of qty]</code> &nbsp; <code>SUM([amount]) * 0.21</code> &nbsp; <code>IF([Sum of amount] &gt; 1000, 1, 0)</code>'}),
       el('div',{html:'Functions: SUM AVG MIN MAX COUNT DCOUNT STDEV VAR (on a [field]) &middot; IF ABS ROUND SQRT LN EXP POWER COALESCE &middot; operators + - * / ^ &lt; &gt; = &lt;&gt; AND OR NOT. Division by zero gives blank.'})]),
     err]);
-  openDialog(edit?'Edit Calculated Field':'Insert Calculated Field',body,[{text:'OK',pri:true,fn:function(){
-    var nm=nameIn.value.trim(),f=fx.value.trim();
+  // checks name and formula (syntax, unknown fields/measures); true when fine
+  var checkCalc=function(nm,f){
     if(!nm){flagReq(nameIn);dlgError(err,'Please enter a name.');return false}
     if(nameTaken(nm,def.id)){flagReq(nameIn);dlgError(err,'A field or measure called "'+nm+'" already exists.');return false}
     if(!f){flagReq(fx);dlgError(err,'Please enter a formula.');return false}
@@ -4597,6 +4598,17 @@ function openCalcDialog(def){
     try{planMeasures(S.values.filter(function(v){return v.fieldId!==tmp.id}).concat([{id:'tmpitem',fieldId:tmp.id,agg:'sum',name:''}]))}
     catch(e){dlgError(err,e.message);return false}
     finally{if(saveF)S.byId[tmp.id]=saveF;else delete S.byId[tmp.id]}
+    return true;
+  };
+  var testCalc=function(){
+    var nm=nameIn.value.trim()||'Test';
+    if(checkCalc(nm,fx.value.trim())){dlgError(err,'');err.style.display='';err.style.color='#1e6b3a';err.style.background='#e6f4ea';err.style.borderColor='#9fd0ae';err.textContent='The formula is valid.'}
+    else{err.style.color='';err.style.background='';err.style.borderColor=''}
+  };
+  openDialog(edit?'Edit Calculated Field':'Insert Calculated Field',body,[{text:'OK',pri:true,fn:function(){
+    var nm=nameIn.value.trim(),f=fx.value.trim();
+    err.style.color='';err.style.background='';err.style.borderColor='';
+    if(!checkCalc(nm,f))return false;
     saveCustom({id:def.id||nid('k'),kind:'calc',name:nm,formula:f});
   }},{text:'Cancel'}]);
 }
@@ -4678,7 +4690,7 @@ function openSqlColDialog(def){
   var nameIn=el('input',{type:'text',value:def.name,placeholder:'e.g. Net amount'});
   var typeSel=el('select');
   [['','Automatic (as calculated)'],['VARCHAR','Text (VARCHAR)'],['BIGINT','Whole number (BIGINT)'],['INTEGER','Whole number (INTEGER)'],['DOUBLE','Decimal number (DOUBLE)'],['DECIMAL(18,2)','Decimal, 2 places (DECIMAL(18,2))'],['DECIMAL(18,4)','Decimal, 4 places (DECIMAL(18,4))'],['DATE','Date (DATE)'],['TIMESTAMP','Date and time (TIMESTAMP)'],['BOOLEAN','Yes / No (BOOLEAN)']].forEach(function(o){var e=el('option',{value:o[0],text:o[1]});if(o[0]===(def.cast||''))e.selected=true;typeSel.appendChild(e)});
-  var ta=el('textarea',{class:'sqm-ta',spellcheck:'false',placeholder:'A DuckDB SQL expression that is calculated for every row, e.g.\n"amount" * (1 - "discount")\nCASE WHEN "qty" > 10 THEN \'Bulk\' ELSE \'Single\' END\nstrftime("order_date", \'%Y-%m\')'});
+  var ta=el('textarea',{class:'sqm-ta',spellcheck:'false',placeholder:'A DuckDB SQL expression that is calculated for every row, e.g.\nLEFT("G/L Account", 4)\n"amount" * (1 - "discount")\nCASE WHEN "qty" > 10 THEN \'Bulk\' ELSE \'Single\' END\nstrftime("order_date", \'%Y-%m\')'});
   var pre=el('pre',{'aria-hidden':'true'});ta.value=def.sql||'';
   var okText=null,okType=def.type||'';
   var hl=function(){pre.innerHTML=sqlHtml(ta.value,[])+'\n ';pre.scrollTop=ta.scrollTop;pre.scrollLeft=ta.scrollLeft};
@@ -4717,7 +4729,7 @@ function openSqlColDialog(def){
   };
   var panel=el('div',{class:'sqm fd-q'},[
     el('div',{class:'sqm-side'},[el('div',{class:'sqm-h'},[el('b',{text:'Columns'})]),search,cols]),
-    el('div',{class:'sqm-r'},[el('div',{class:'fd-hint',text:'Write a DuckDB SQL expression that is calculated for every record. The result becomes a new column you can use in rows, columns, values and filters.'}),
+    el('div',{class:'sqm-r'},[el('div',{class:'fd-hint',text:'Write a DuckDB SQL expression that is calculated for every record, e.g. LEFT("G/L Account", 4) for the first 4 characters. The result becomes a new field you can use in rows, columns, values and filters. Double-click a column on the left to insert it.'}),
       el('div',{class:'sqe'},[pre,ta]),el('div',{style:'display:flex;gap:10px;align-items:center'},[el('button',{class:'btn',text:'Test expression',onclick:test}),msg])])]);
   var box=el('div',{class:'fd sqlmode'},[el('div',{class:'fd-top'},[el('div',{class:'fd-f',style:'flex:1'},[el('label',{text:'Column name'}),nameIn]),el('div',{style:'display:flex;flex-direction:column;gap:4px'},[el('label',{text:'Column type'}),typeSel])]),panel]);
   var dlgEl=null;
@@ -4725,7 +4737,7 @@ function openSqlColDialog(def){
     saveCustom({id:def.id||nid('k'),kind:'sqlcol',name:nameIn.value.trim(),sql:ta.value.trim(),type:okType,cast:typeSel.value||''});
     var bk=dlgEl&&dlgEl.parentNode;if(bk)bk.remove();
   };
-  dlgEl=openDialog(edit?'Edit SQL Column':'New SQL Column',box,[{text:'Cancel'},{text:'OK',pri:true,fn:function(){
+  dlgEl=openDialog(edit?'Edit Calculated Column':'New Calculated Column',box,[{text:'Cancel'},{text:'OK',pri:true,fn:function(){
     var nm=nameIn.value.trim();
     if(!nm){flagReq(nameIn);msg.textContent='Please enter a name.';msg.className='fd-hint err';return false}
     if(nameTaken(nm,def.id)){flagReq(nameIn);msg.textContent='A field or measure called "'+nm+'" already exists.';msg.className='fd-hint err';return false}
@@ -4771,7 +4783,7 @@ function openCalcManager(){
   var close=function(){var b=d.parentNode;if(b)b.remove()};
 }
 function calcMenu(x,y){
-  showMenu([{text:'Calculated Field…',fn:function(){openCalcDialog()}},{text:'Restricted Measure…',fn:function(){openRestrictedDialog()}},'-',{text:'SQL Column (advanced)…',fn:function(){openSqlColDialog()}},'-',{text:'Manage Calculations…',fn:openCalcManager}],x,y);
+  showMenu([{text:'Calculated Field (measure)…',fn:function(){openCalcDialog()}},{text:'Restricted Measure…',fn:function(){openRestrictedDialog()}},'-',{text:'Calculated Column (text, date, number – SQL)…',fn:function(){openSqlColDialog()}},'-',{text:'Manage Calculations…',fn:openCalcManager}],x,y);
 }
 
 /* ====================================================================== conditional formatting */
